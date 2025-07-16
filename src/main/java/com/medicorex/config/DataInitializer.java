@@ -27,17 +27,11 @@ public class DataInitializer {
                 System.out.println("✅ Categories initialized!");
             }
 
-            // Always recreate users to ensure consistent password encoding
-            if (userRepository.count() > 0) {
-                System.out.println("⚠️ Deleting existing users to recreate with consistent password encoding");
-                userRepository.deleteAll();
-            }
-
-            // Initialize users with encoded passwords
+            // Initialize users only if they don't exist
             if (userRepository.count() == 0) {
                 User admin = new User();
                 admin.setUsername("admin");
-                admin.setPassword(passwordEncoder.encode("admin123")); // IMPORTANT: Encoding password
+                admin.setPassword(passwordEncoder.encode("admin123"));
                 admin.setEmail("admin@medicorex.com");
                 admin.setFullName("System Administrator");
                 admin.setRole(User.UserRole.HOSPITAL_MANAGER);
@@ -47,7 +41,7 @@ public class DataInitializer {
 
                 User staff = new User();
                 staff.setUsername("staff");
-                staff.setPassword(passwordEncoder.encode("staff123")); // IMPORTANT: Encoding password
+                staff.setPassword(passwordEncoder.encode("staff123"));
                 staff.setEmail("staff@medicorex.com");
                 staff.setFullName("Pharmacy Staff");
                 staff.setRole(User.UserRole.PHARMACY_STAFF);
@@ -57,7 +51,7 @@ public class DataInitializer {
 
                 User procurement = new User();
                 procurement.setUsername("procurement");
-                procurement.setPassword(passwordEncoder.encode("proc123")); // IMPORTANT: Encoding password
+                procurement.setPassword(passwordEncoder.encode("proc123"));
                 procurement.setEmail("procurement@medicorex.com");
                 procurement.setFullName("Procurement Officer");
                 procurement.setRole(User.UserRole.PROCUREMENT_OFFICER);
@@ -66,6 +60,8 @@ public class DataInitializer {
                 System.out.println("✅ Procurement user created with encoded password");
 
                 System.out.println("✅ All users initialized with encoded passwords!");
+            } else {
+                System.out.println("✅ Users already exist, skipping initialization");
             }
         };
     }

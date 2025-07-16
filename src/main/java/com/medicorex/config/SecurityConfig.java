@@ -63,7 +63,11 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/test/**").permitAll()
                         .requestMatchers("/").permitAll()
+                        .requestMatchers("/health/**").permitAll()
                         .requestMatchers("/api/users/**").hasRole("HOSPITAL_MANAGER")
+                        .requestMatchers("/api/products/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
+                        .requestMatchers("/api/categories/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
+                        .requestMatchers("/api/stock/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().authenticated()
                 );
