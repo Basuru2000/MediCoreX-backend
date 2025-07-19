@@ -64,10 +64,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/test/**").permitAll()
                         .requestMatchers("/").permitAll()
                         .requestMatchers("/health/**").permitAll()
+                        .requestMatchers("/uploads/**").permitAll()  // Allow public access to uploaded images
                         .requestMatchers("/api/users/**").hasRole("HOSPITAL_MANAGER")
                         .requestMatchers("/api/products/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
                         .requestMatchers("/api/categories/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
                         .requestMatchers("/api/stock/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
+                        .requestMatchers("/api/files/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().authenticated()
                 );

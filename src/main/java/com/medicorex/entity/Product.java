@@ -48,6 +48,8 @@ public class Product {
 
     private String manufacturer;
 
+    private String imageUrl;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

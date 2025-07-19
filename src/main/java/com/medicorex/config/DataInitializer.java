@@ -21,10 +21,44 @@ public class DataInitializer {
         return args -> {
             // Initialize categories
             if (categoryRepository.count() == 0) {
-                categoryRepository.save(new Category(null, "Medications", "Pharmaceutical drugs and medicines", null));
-                categoryRepository.save(new Category(null, "Medical Supplies", "Consumable medical supplies", null));
-                categoryRepository.save(new Category(null, "Equipment", "Medical equipment and devices", null));
+                // Create root categories
+                Category medications = new Category();
+                medications.setName("Medications");
+                medications.setDescription("Pharmaceutical drugs and medicines");
+                categoryRepository.save(medications);
+
+                Category medicalSupplies = new Category();
+                medicalSupplies.setName("Medical Supplies");
+                medicalSupplies.setDescription("Consumable medical supplies");
+                categoryRepository.save(medicalSupplies);
+
+                Category equipment = new Category();
+                equipment.setName("Equipment");
+                equipment.setDescription("Medical equipment and devices");
+                categoryRepository.save(equipment);
+
                 System.out.println("✅ Categories initialized!");
+
+                // Optional: Create some subcategories for demonstration
+                Category antibiotics = new Category();
+                antibiotics.setName("Antibiotics");
+                antibiotics.setDescription("Antibiotic medications");
+                antibiotics.setParent(medications);
+                categoryRepository.save(antibiotics);
+
+                Category painRelief = new Category();
+                painRelief.setName("Pain Relief");
+                painRelief.setDescription("Pain relief medications");
+                painRelief.setParent(medications);
+                categoryRepository.save(painRelief);
+
+                Category syringes = new Category();
+                syringes.setName("Syringes");
+                syringes.setDescription("Medical syringes and needles");
+                syringes.setParent(medicalSupplies);
+                categoryRepository.save(syringes);
+
+                System.out.println("✅ Subcategories initialized!");
             }
 
             // Initialize users only if they don't exist

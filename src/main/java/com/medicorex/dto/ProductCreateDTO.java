@@ -52,4 +52,6 @@ public class ProductCreateDTO {
 
     @Size(max = 100, message = "Manufacturer must not exceed 100 characters")
     private String manufacturer;
+
+    private String imageUrl;
 }
