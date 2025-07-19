@@ -22,6 +22,9 @@ public class CategoryService {
     private final CategoryRepository categoryRepository;
     private final ProductRepository productRepository;
 
+    // Maximum allowed depth for category hierarchy (0-based, so 3 means 4 levels total)
+    private static final int MAX_CATEGORY_DEPTH = 3; // Adjust as needed (0=root, 1=child, 2=grandchild, 3=great-grandchild)
+
     public List<CategoryDTO> getAllCategories() {
         List<Category> categories = categoryRepository.findAll();
         return categories.stream()
@@ -70,6 +73,9 @@ public class CategoryService {
             if (parent.getId().equals(categoryDTO.getId())) {
                 throw new BusinessException("Category cannot be its own parent");
             }
+
+            // Validate depth
+            validateCategoryDepth(parent);
         }
 
         Category category = new Category();
@@ -105,6 +111,10 @@ public class CategoryService {
 
             Category parent = categoryRepository.findById(categoryDTO.getParentId())
                     .orElseThrow(() -> new BusinessException("Parent category not found"));
+
+            // Validate that moving this category won't exceed max depth
+            validateCategoryMove(category, parent);
+
             category.setParent(parent);
         } else {
             category.setParent(null);
@@ -133,6 +143,51 @@ public class CategoryService {
         }
 
         categoryRepository.deleteById(id);
+    }
+
+    private void validateCategoryDepth(Category potentialParent) {
+        if (potentialParent == null) {
+            return; // Root category, no depth limit
+        }
+
+        int parentLevel = getCategoryLevel(potentialParent);
+        if (parentLevel >= MAX_CATEGORY_DEPTH) {
+            throw new BusinessException(
+                    String.format("Cannot create category at this level. Maximum allowed depth is %d levels. " +
+                            "Current parent is at level %d.", MAX_CATEGORY_DEPTH + 1, parentLevel + 1)
+            );
+        }
+    }
+
+    private void validateCategoryMove(Category categoryToMove, Category newParent) {
+        // Calculate the depth of the subtree being moved
+        int subtreeDepth = getSubtreeDepth(categoryToMove);
+
+        // Calculate the level of the new parent
+        int newParentLevel = getCategoryLevel(newParent);
+
+        // Check if moving would exceed max depth
+        if (newParentLevel + subtreeDepth > MAX_CATEGORY_DEPTH) {
+            throw new BusinessException(
+                    String.format("Cannot move category here. The operation would exceed the maximum allowed depth of %d levels. " +
+                                    "Moving this category with its %d levels of subcategories to level %d would result in a depth of %d.",
+                            MAX_CATEGORY_DEPTH + 1, subtreeDepth, newParentLevel + 1, newParentLevel + subtreeDepth + 1)
+            );
+        }
+    }
+
+    private int getSubtreeDepth(Category category) {
+        List<Category> children = categoryRepository.findByParentId(category.getId());
+        if (children.isEmpty()) {
+            return 1; // Just this category
+        }
+
+        int maxChildDepth = 0;
+        for (Category child : children) {
+            maxChildDepth = Math.max(maxChildDepth, getSubtreeDepth(child));
+        }
+
+        return 1 + maxChildDepth;
     }
 
     private boolean isDescendant(Long categoryId, Long potentialDescendantId) {
