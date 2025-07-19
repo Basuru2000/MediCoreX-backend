@@ -25,6 +25,24 @@ public class CategoryController {
         return ResponseEntity.ok(categoryService.getAllCategories());
     }
 
+    @GetMapping("/tree")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<CategoryDTO>> getCategoryTree() {
+        return ResponseEntity.ok(categoryService.getCategoryTree());
+    }
+
+    @GetMapping("/root")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<CategoryDTO>> getRootCategories() {
+        return ResponseEntity.ok(categoryService.getRootCategories());
+    }
+
+    @GetMapping("/{id}/children")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<CategoryDTO>> getChildCategories(@PathVariable Long id) {
+        return ResponseEntity.ok(categoryService.getChildCategories(id));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
     public ResponseEntity<CategoryDTO> getCategoryById(@PathVariable Long id) {

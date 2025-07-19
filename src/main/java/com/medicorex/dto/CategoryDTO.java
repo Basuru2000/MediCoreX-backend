@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @AllArgsConstructor
@@ -21,5 +23,10 @@ public class CategoryDTO {
     @Size(max = 500, message = "Description must not exceed 500 characters")
     private String description;
 
+    private Long parentId;
+    private String parentName;
+    private List<CategoryDTO> children;
     private Long productCount; // Number of products in this category
+    private Integer level; // Hierarchy level (0 for root, 1 for first level, etc.)
+    private String fullPath; // Full path like "Parent > Child > SubChild"
 }

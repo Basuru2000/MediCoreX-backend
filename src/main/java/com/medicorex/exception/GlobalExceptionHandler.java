@@ -1,6 +1,7 @@
 package com.medicorex.exception;
 
 import com.medicorex.dto.ErrorResponse;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -35,6 +36,27 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolationException(DataIntegrityViolationException ex) {
+        String message = "Operation failed due to data integrity constraints.";
+
+        // Check for specific constraint violations
+        if (ex.getMessage() != null) {
+            if (ex.getMessage().contains("stock_transactions")) {
+                message = "Cannot delete this product because it has stock transaction history. Transaction records must be preserved for audit purposes.";
+            } else if (ex.getMessage().contains("foreign key constraint")) {
+                message = "Cannot perform this operation because the record is referenced by other data.";
+            }
+        }
+
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .message(message)
+                .status(HttpStatus.CONFLICT.value())
+                .timestamp(LocalDateTime.now())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex) {
         Map<String, String> errors = new HashMap<>();
@@ -50,5 +72,15 @@ public class GlobalExceptionHandler {
         response.put("timestamp", LocalDateTime.now());
 
         return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .message("An unexpected error occurred: " + ex.getMessage())
+                .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                .timestamp(LocalDateTime.now())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

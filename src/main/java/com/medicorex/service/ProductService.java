@@ -9,6 +9,7 @@ import com.medicorex.exception.BusinessException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.CategoryRepository;
 import com.medicorex.repository.ProductRepository;
+import com.medicorex.repository.StockTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,6 +27,8 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final StockTransactionRepository stockTransactionRepository;
+    private final FileService fileService;
 
     public PageResponseDTO<ProductDTO> getAllProducts(Pageable pageable) {
         Page<Product> productPage = productRepository.findAll(pageable);
@@ -103,9 +106,21 @@ public class ProductService {
     }
 
     public void deleteProduct(Long id) {
-        if (!productRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Product", "id", id);
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", "id", id));
+
+        // Check if product has stock transactions
+        Long transactionCount = stockTransactionRepository.countByProductId(id);
+        if (transactionCount > 0) {
+            throw new BusinessException("Cannot delete product with " + transactionCount +
+                    " stock transactions. This product has transaction history that must be preserved.");
         }
+
+        // Delete associated image if exists
+        if (product.getImageUrl() != null && !product.getImageUrl().isEmpty()) {
+            fileService.deleteFile(product.getImageUrl());
+        }
+
         productRepository.deleteById(id);
     }
 
@@ -132,6 +147,7 @@ public class ProductService {
         product.setExpiryDate(dto.getExpiryDate());
         product.setBatchNumber(dto.getBatchNumber());
         product.setManufacturer(dto.getManufacturer());
+        product.setImageUrl(dto.getImageUrl());
     }
 
     private ProductDTO convertToDTO(Product product) {
@@ -152,6 +168,7 @@ public class ProductService {
                 .expiryDate(product.getExpiryDate())
                 .batchNumber(product.getBatchNumber())
                 .manufacturer(product.getManufacturer())
+                .imageUrl(product.getImageUrl())
                 .createdAt(product.getCreatedAt())
                 .updatedAt(product.getUpdatedAt())
                 .stockStatus(stockStatus)

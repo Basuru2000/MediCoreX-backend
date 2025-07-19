@@ -26,4 +26,7 @@ public interface StockTransactionRepository extends JpaRepository<StockTransacti
             LocalDateTime startDate,
             LocalDateTime endDate
     );
+
+    // Count transactions for a product
+    Long countByProductId(Long productId);
 }

@@ -27,6 +27,7 @@ public class ProductDTO {
     private LocalDate expiryDate;
     private String batchNumber;
     private String manufacturer;
+    private String imageUrl;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
