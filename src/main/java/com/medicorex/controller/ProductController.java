@@ -3,17 +3,27 @@ package com.medicorex.controller;
 import com.medicorex.dto.PageResponseDTO;
 import com.medicorex.dto.ProductCreateDTO;
 import com.medicorex.dto.ProductDTO;
+import com.medicorex.dto.ImportResultDTO;
+import com.medicorex.dto.ImportErrorDTO;
 import com.medicorex.service.ProductService;
+import com.medicorex.service.ProductExportService;
+import com.medicorex.service.ProductImportService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @RestController
@@ -23,6 +33,8 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService productService;
+    private final ProductExportService exportService;
+    private final ProductImportService importService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
@@ -101,5 +113,105 @@ public class ProductController {
     public ResponseEntity<Void> deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Export all products to CSV
+     */
+    @GetMapping("/export/csv")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<byte[]> exportProductsCSV() {
+        try {
+            byte[] csvData = exportService.exportProductsToCSV();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("text/csv"));
+            headers.setContentDispositionFormData("attachment",
+                    "products_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".csv");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(csvData);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Export all products to Excel
+     */
+    @GetMapping("/export/excel")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<byte[]> exportProductsExcel() {
+        try {
+            byte[] excelData = exportService.exportProductsToExcel();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+            headers.setContentDispositionFormData("attachment",
+                    "products_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".xlsx");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(excelData);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Download import template
+     */
+    @GetMapping("/import/template")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<byte[]> downloadImportTemplate() {
+        try {
+            byte[] templateData = exportService.generateImportTemplate();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+            headers.setContentDispositionFormData("attachment", "product_import_template.xlsx");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(templateData);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Import products from file
+     */
+    @PostMapping("/import")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<ImportResultDTO> importProducts(@RequestParam("file") MultipartFile file) {
+        try {
+            // Validate file
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(new ImportResultDTO(0, 0, 0,
+                                List.of(new ImportErrorDTO(0, "File is empty"))));
+            }
+
+            // Check file size (max 10MB)
+            if (file.getSize() > 10 * 1024 * 1024) {
+                return ResponseEntity.badRequest()
+                        .body(new ImportResultDTO(0, 0, 0,
+                                List.of(new ImportErrorDTO(0, "File size exceeds 10MB limit"))));
+            }
+
+            ImportResultDTO result = importService.importProducts(file);
+            return ResponseEntity.ok(result);
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body(new ImportResultDTO(0, 0, 0,
+                            List.of(new ImportErrorDTO(0, e.getMessage()))));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError()
+                    .body(new ImportResultDTO(0, 0, 0,
+                            List.of(new ImportErrorDTO(0, "File processing error: " + e.getMessage()))));
+        }
     }
 }
