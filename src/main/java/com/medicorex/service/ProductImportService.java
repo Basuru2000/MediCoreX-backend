@@ -1,0 +1,467 @@
+package com.medicorex.service;
+
+import com.medicorex.dto.ImportResultDTO;
+import com.medicorex.dto.ImportErrorDTO;
+import com.medicorex.entity.Category;
+import com.medicorex.entity.Product;
+import com.medicorex.repository.CategoryRepository;
+import com.medicorex.repository.ProductRepository;
+import com.opencsv.CSVReader;
+import com.opencsv.exceptions.CsvException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ProductImportService {
+
+    private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    /**
+     * Import products from uploaded file (CSV or Excel)
+     */
+    public ImportResultDTO importProducts(MultipartFile file) throws IOException {
+        String filename = file.getOriginalFilename();
+        if (filename == null) {
+            throw new IllegalArgumentException("File name cannot be null");
+        }
+
+        String extension = filename.substring(filename.lastIndexOf(".") + 1).toLowerCase();
+
+        if ("csv".equals(extension)) {
+            return importFromCSV(file);
+        } else if ("xlsx".equals(extension) || "xls".equals(extension)) {
+            return importFromExcel(file);
+        } else {
+            throw new IllegalArgumentException("Unsupported file format. Please upload CSV or Excel file.");
+        }
+    }
+
+    /**
+     * Import products from CSV file
+     */
+    private ImportResultDTO importFromCSV(MultipartFile file) throws IOException {
+        List<ImportErrorDTO> errors = new ArrayList<>();
+        List<Product> successfulImports = new ArrayList<>();
+        int rowNumber = 0;
+
+        try (CSVReader csvReader = new CSVReader(new InputStreamReader(file.getInputStream()))) {
+            List<String[]> records = csvReader.readAll();
+
+            if (records.isEmpty()) {
+                errors.add(new ImportErrorDTO(0, "File is empty"));
+                return new ImportResultDTO(0, 0, 0, errors);
+            }
+
+            // Skip header row
+            for (int i = 1; i < records.size(); i++) {
+                rowNumber = i + 1;
+                String[] row = records.get(i);
+
+                // Skip empty rows
+                if (isEmptyRow(row)) {
+                    continue;
+                }
+
+                try {
+                    Product product = parseProductFromCSV(row, rowNumber);
+                    if (product != null) {
+                        successfulImports.add(product);
+                    }
+                } catch (Exception e) {
+                    errors.add(new ImportErrorDTO(rowNumber, e.getMessage()));
+                }
+            }
+
+            // Save all successful imports
+            productRepository.saveAll(successfulImports);
+
+        } catch (CsvException e) {
+            errors.add(new ImportErrorDTO(0, "CSV parsing error: " + e.getMessage()));
+        }
+
+        return new ImportResultDTO(
+                rowNumber - 1, // Total rows (excluding header)
+                successfulImports.size(),
+                errors.size(),
+                errors
+        );
+    }
+
+    /**
+     * Import products from Excel file
+     */
+    private ImportResultDTO importFromExcel(MultipartFile file) throws IOException {
+        List<ImportErrorDTO> errors = new ArrayList<>();
+        List<Product> successfulImports = new ArrayList<>();
+        int totalRows = 0;
+
+        try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+            Sheet sheet = workbook.getSheetAt(0);
+
+            if (sheet == null) {
+                errors.add(new ImportErrorDTO(0, "Excel file is empty"));
+                return new ImportResultDTO(0, 0, 0, errors);
+            }
+
+            Iterator<Row> rowIterator = sheet.iterator();
+
+            // Skip header row
+            if (rowIterator.hasNext()) {
+                rowIterator.next();
+            }
+
+            while (rowIterator.hasNext()) {
+                Row row = rowIterator.next();
+                int rowNumber = row.getRowNum() + 1;
+                totalRows++;
+
+                // Skip empty rows
+                if (isEmptyRow(row)) {
+                    continue;
+                }
+
+                try {
+                    Product product = parseProductFromExcel(row, rowNumber);
+                    if (product != null) {
+                        successfulImports.add(product);
+                    }
+                } catch (Exception e) {
+                    errors.add(new ImportErrorDTO(rowNumber, e.getMessage()));
+                }
+            }
+
+            // Save all successful imports
+            productRepository.saveAll(successfulImports);
+        }
+
+        return new ImportResultDTO(
+                totalRows,
+                successfulImports.size(),
+                errors.size(),
+                errors
+        );
+    }
+
+    /**
+     * Parse product from CSV row
+     */
+    private Product parseProductFromCSV(String[] row, int rowNumber) {
+        if (row.length < 8) {
+            throw new IllegalArgumentException("Insufficient data. Expected at least 8 columns.");
+        }
+
+        Product product = new Product();
+
+        // Product Code (optional, auto-generate if empty)
+        String code = row[0].trim();
+        if (!code.isEmpty()) {
+            // Check if code already exists
+            if (productRepository.findByCode(code).isPresent()) {
+                throw new IllegalArgumentException("Product code '" + code + "' already exists");
+            }
+            product.setCode(code);
+        } else {
+            product.setCode(generateProductCode());
+        }
+
+        // Product Name (required)
+        String name = row[1].trim();
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Product name is required");
+        }
+        product.setName(name);
+
+        // Description (optional)
+        if (row.length > 2) {
+            product.setDescription(row[2].trim());
+        }
+
+        // Category (required)
+        String categoryName = row[3].trim();
+        Category category = categoryRepository.findByName(categoryName)
+                .orElseThrow(() -> new IllegalArgumentException("Category '" + categoryName + "' not found"));
+        product.setCategory(category);
+
+        // Quantity (required)
+        try {
+            product.setQuantity(Integer.parseInt(row[4].trim()));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid quantity: " + row[4]);
+        }
+
+        // Min Stock Level (required)
+        try {
+            product.setMinStockLevel(Integer.parseInt(row[5].trim()));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid minimum stock level: " + row[5]);
+        }
+
+        // Unit (required)
+        String unit = row[6].trim();
+        if (unit.isEmpty()) {
+            throw new IllegalArgumentException("Unit is required");
+        }
+        product.setUnit(unit);
+
+        // Unit Price (required)
+        try {
+            product.setUnitPrice(new BigDecimal(row[7].trim()));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid unit price: " + row[7]);
+        }
+
+        // Expiry Date (optional)
+        if (row.length > 8 && !row[8].trim().isEmpty()) {
+            try {
+                product.setExpiryDate(LocalDate.parse(row[8].trim(), DATE_FORMATTER));
+            } catch (DateTimeParseException e) {
+                throw new IllegalArgumentException("Invalid expiry date format. Use YYYY-MM-DD");
+            }
+        }
+
+        // Batch Number (optional)
+        if (row.length > 9) {
+            product.setBatchNumber(row[9].trim());
+        }
+
+        // Manufacturer (optional)
+        if (row.length > 10) {
+            product.setManufacturer(row[10].trim());
+        }
+
+        return product;
+    }
+
+    /**
+     * Parse product from Excel row
+     */
+    private Product parseProductFromExcel(Row row, int rowNumber) {
+        Product product = new Product();
+
+        // Product Code (optional, auto-generate if empty)
+        String code = getCellValueAsString(row.getCell(0));
+        if (!code.isEmpty()) {
+            // Check if code already exists
+            if (productRepository.findByCode(code).isPresent()) {
+                throw new IllegalArgumentException("Product code '" + code + "' already exists");
+            }
+            product.setCode(code);
+        } else {
+            product.setCode(generateProductCode());
+        }
+
+        // Product Name (required)
+        String name = getCellValueAsString(row.getCell(1));
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Product name is required");
+        }
+        product.setName(name);
+
+        // Description (optional)
+        product.setDescription(getCellValueAsString(row.getCell(2)));
+
+        // Category (required)
+        String categoryName = getCellValueAsString(row.getCell(3));
+        Category category = categoryRepository.findByName(categoryName)
+                .orElseThrow(() -> new IllegalArgumentException("Category '" + categoryName + "' not found"));
+        product.setCategory(category);
+
+        // Quantity (required)
+        int quantity = getCellValueAsInteger(row.getCell(4));
+        if (quantity < 0) {
+            throw new IllegalArgumentException("Quantity cannot be negative");
+        }
+        product.setQuantity(quantity);
+
+        // Min Stock Level (required)
+        int minStock = getCellValueAsInteger(row.getCell(5));
+        if (minStock < 0) {
+            throw new IllegalArgumentException("Minimum stock level cannot be negative");
+        }
+        product.setMinStockLevel(minStock);
+
+        // Unit (required)
+        String unit = getCellValueAsString(row.getCell(6));
+        if (unit.isEmpty()) {
+            throw new IllegalArgumentException("Unit is required");
+        }
+        product.setUnit(unit);
+
+        // Unit Price (required)
+        BigDecimal price = getCellValueAsBigDecimal(row.getCell(7));
+        if (price.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Unit price cannot be negative");
+        }
+        product.setUnitPrice(price);
+
+        // Expiry Date (optional)
+        Cell expiryCell = row.getCell(8);
+        if (expiryCell != null) {
+            LocalDate expiryDate = getCellValueAsDate(expiryCell);
+            product.setExpiryDate(expiryDate);
+        }
+
+        // Batch Number (optional)
+        product.setBatchNumber(getCellValueAsString(row.getCell(9)));
+
+        // Manufacturer (optional)
+        product.setManufacturer(getCellValueAsString(row.getCell(10)));
+
+        return product;
+    }
+
+    /**
+     * Generate unique product code
+     */
+    private String generateProductCode() {
+        String prefix = "PROD";
+        String timestamp = String.valueOf(System.currentTimeMillis()).substring(7);
+        String random = String.valueOf((int)(Math.random() * 1000));
+        return prefix + timestamp + random;
+    }
+
+    /**
+     * Check if CSV row is empty
+     */
+    private boolean isEmptyRow(String[] row) {
+        return Arrays.stream(row).allMatch(cell -> cell == null || cell.trim().isEmpty());
+    }
+
+    /**
+     * Check if Excel row is empty
+     */
+    private boolean isEmptyRow(Row row) {
+        if (row == null) {
+            return true;
+        }
+
+        for (Cell cell : row) {
+            if (cell != null && cell.getCellType() != CellType.BLANK) {
+                String value = getCellValueAsString(cell);
+                if (!value.trim().isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Get cell value as String
+     */
+    private String getCellValueAsString(Cell cell) {
+        if (cell == null) {
+            return "";
+        }
+
+        switch (cell.getCellType()) {
+            case STRING:
+                return cell.getStringCellValue().trim();
+            case NUMERIC:
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    return cell.getDateCellValue().toString();
+                }
+                return String.valueOf((int) cell.getNumericCellValue());
+            case BOOLEAN:
+                return String.valueOf(cell.getBooleanCellValue());
+            case FORMULA:
+                return cell.getCellFormula();
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * Get cell value as Integer
+     */
+    private int getCellValueAsInteger(Cell cell) {
+        if (cell == null) {
+            throw new IllegalArgumentException("Required field is empty");
+        }
+
+        switch (cell.getCellType()) {
+            case NUMERIC:
+                return (int) cell.getNumericCellValue();
+            case STRING:
+                try {
+                    return Integer.parseInt(cell.getStringCellValue().trim());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid number: " + cell.getStringCellValue());
+                }
+            default:
+                throw new IllegalArgumentException("Invalid number format");
+        }
+    }
+
+    /**
+     * Get cell value as BigDecimal
+     */
+    private BigDecimal getCellValueAsBigDecimal(Cell cell) {
+        if (cell == null) {
+            throw new IllegalArgumentException("Required field is empty");
+        }
+
+        switch (cell.getCellType()) {
+            case NUMERIC:
+                return BigDecimal.valueOf(cell.getNumericCellValue());
+            case STRING:
+                try {
+                    return new BigDecimal(cell.getStringCellValue().trim());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid decimal number: " + cell.getStringCellValue());
+                }
+            default:
+                throw new IllegalArgumentException("Invalid decimal format");
+        }
+    }
+
+    /**
+     * Get cell value as LocalDate
+     */
+    private LocalDate getCellValueAsDate(Cell cell) {
+        if (cell == null) {
+            return null;
+        }
+
+        switch (cell.getCellType()) {
+            case NUMERIC:
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    return cell.getDateCellValue().toInstant()
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate();
+                }
+                throw new IllegalArgumentException("Invalid date format");
+            case STRING:
+                String dateStr = cell.getStringCellValue().trim();
+                if (dateStr.isEmpty()) {
+                    return null;
+                }
+                try {
+                    return LocalDate.parse(dateStr, DATE_FORMATTER);
+                } catch (DateTimeParseException e) {
+                    throw new IllegalArgumentException("Invalid date format. Use YYYY-MM-DD");
+                }
+            default:
+                return null;
+        }
+    }
+}
