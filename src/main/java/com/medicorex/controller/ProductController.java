@@ -116,18 +116,21 @@ public class ProductController {
     }
 
     /**
-     * Export all products to CSV
+     * Export products to CSV based on filter type
      */
     @GetMapping("/export/csv")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
-    public ResponseEntity<byte[]> exportProductsCSV() {
+    public ResponseEntity<byte[]> exportProductsCSV(@RequestParam(defaultValue = "all") String filter) {
         try {
-            byte[] csvData = exportService.exportProductsToCSV();
+            byte[] csvData = exportService.exportProductsToCSV(filter);
+
+            String filename = String.format("products_%s_%s.csv",
+                    filter.toLowerCase(),
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.parseMediaType("text/csv"));
-            headers.setContentDispositionFormData("attachment",
-                    "products_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".csv");
+            headers.setContentDispositionFormData("attachment", filename);
 
             return ResponseEntity.ok()
                     .headers(headers)
@@ -138,18 +141,21 @@ public class ProductController {
     }
 
     /**
-     * Export all products to Excel
+     * Export products to Excel based on filter type
      */
     @GetMapping("/export/excel")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
-    public ResponseEntity<byte[]> exportProductsExcel() {
+    public ResponseEntity<byte[]> exportProductsExcel(@RequestParam(defaultValue = "all") String filter) {
         try {
-            byte[] excelData = exportService.exportProductsToExcel();
+            byte[] excelData = exportService.exportProductsToExcel(filter);
+
+            String filename = String.format("products_%s_%s.xlsx",
+                    filter.toLowerCase(),
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
-            headers.setContentDispositionFormData("attachment",
-                    "products_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".xlsx");
+            headers.setContentDispositionFormData("attachment", filename);
 
             return ResponseEntity.ok()
                     .headers(headers)
