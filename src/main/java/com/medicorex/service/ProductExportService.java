@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,10 +29,10 @@ public class ProductExportService {
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     /**
-     * Export all products to CSV format
+     * Export products to CSV format based on filter type
      */
-    public byte[] exportProductsToCSV() throws IOException {
-        List<Product> products = productRepository.findAll();
+    public byte[] exportProductsToCSV(String filterType) throws IOException {
+        List<Product> products = getFilteredProducts(filterType);
 
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
              OutputStreamWriter osw = new OutputStreamWriter(baos);
@@ -42,12 +43,13 @@ public class ProductExportService {
                     "ID", "Product Code", "Product Name", "Description",
                     "Category", "Quantity", "Min Stock Level", "Unit",
                     "Unit Price", "Expiry Date", "Batch Number",
-                    "Manufacturer", "Created Date", "Last Updated"
+                    "Manufacturer", "Stock Status", "Created Date", "Last Updated"
             };
             csvWriter.writeNext(header);
 
             // Write data
             for (Product product : products) {
+                String stockStatus = determineStockStatus(product);
                 String[] data = {
                         product.getId().toString(),
                         product.getCode() != null ? product.getCode() : "",
@@ -61,6 +63,7 @@ public class ProductExportService {
                         product.getExpiryDate() != null ? product.getExpiryDate().format(DATE_FORMATTER) : "",
                         product.getBatchNumber() != null ? product.getBatchNumber() : "",
                         product.getManufacturer() != null ? product.getManufacturer() : "",
+                        stockStatus,
                         product.getCreatedAt().format(DATETIME_FORMATTER),
                         product.getUpdatedAt() != null ? product.getUpdatedAt().format(DATETIME_FORMATTER) : ""
                 };
@@ -73,15 +76,16 @@ public class ProductExportService {
     }
 
     /**
-     * Export all products to Excel format
+     * Export products to Excel format based on filter type
      */
-    public byte[] exportProductsToExcel() throws IOException {
-        List<Product> products = productRepository.findAll();
+    public byte[] exportProductsToExcel(String filterType) throws IOException {
+        List<Product> products = getFilteredProducts(filterType);
+        String sheetName = getSheetName(filterType);
 
         try (Workbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 
-            Sheet sheet = workbook.createSheet("Products");
+            Sheet sheet = workbook.createSheet(sheetName);
 
             // Create header style
             CellStyle headerStyle = workbook.createCellStyle();
@@ -99,7 +103,7 @@ public class ProductExportService {
             // Create date style
             CellStyle dateStyle = workbook.createCellStyle();
             CreationHelper createHelper = workbook.getCreationHelper();
-            dateStyle.setDataFormat(createHelper.createDataFormat().getFormat("yyyy-mm-dd"));
+            dateStyle.setDataFormat(createHelper.createDataFormat().getFormat("yyyy-MM-dd"));
 
             // Create currency style
             CellStyle currencyStyle = workbook.createCellStyle();
@@ -111,7 +115,7 @@ public class ProductExportService {
                     "ID", "Product Code", "Product Name", "Description",
                     "Category", "Quantity", "Min Stock Level", "Unit",
                     "Unit Price", "Expiry Date", "Batch Number",
-                    "Manufacturer", "Created Date", "Last Updated"
+                    "Manufacturer", "Stock Status", "Created Date", "Last Updated"
             };
 
             for (int i = 0; i < headers.length; i++) {
@@ -124,6 +128,7 @@ public class ProductExportService {
             int rowNum = 1;
             for (Product product : products) {
                 Row row = sheet.createRow(rowNum++);
+                String stockStatus = determineStockStatus(product);
 
                 row.createCell(0).setCellValue(product.getId());
                 row.createCell(1).setCellValue(product.getCode() != null ? product.getCode() : "");
@@ -138,23 +143,32 @@ public class ProductExportService {
                 priceCell.setCellValue(product.getUnitPrice().doubleValue());
                 priceCell.setCellStyle(currencyStyle);
 
+                // Fix date formatting
+                Cell dateCell = row.createCell(9);
                 if (product.getExpiryDate() != null) {
-                    Cell dateCell = row.createCell(9);
-                    dateCell.setCellValue(java.sql.Date.valueOf(product.getExpiryDate()));
+                    dateCell.setCellValue(product.getExpiryDate().format(DATE_FORMATTER));
                     dateCell.setCellStyle(dateStyle);
                 } else {
-                    row.createCell(9).setCellValue("");
+                    dateCell.setCellValue("");
                 }
 
                 row.createCell(10).setCellValue(product.getBatchNumber() != null ? product.getBatchNumber() : "");
                 row.createCell(11).setCellValue(product.getManufacturer() != null ? product.getManufacturer() : "");
-                row.createCell(12).setCellValue(product.getCreatedAt().format(DATETIME_FORMATTER));
-                row.createCell(13).setCellValue(product.getUpdatedAt() != null ? product.getUpdatedAt().format(DATETIME_FORMATTER) : "");
+                row.createCell(12).setCellValue(stockStatus);
+                row.createCell(13).setCellValue(product.getCreatedAt().format(DATETIME_FORMATTER));
+                row.createCell(14).setCellValue(product.getUpdatedAt() != null ? product.getUpdatedAt().format(DATETIME_FORMATTER) : "");
             }
 
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
+                // Ensure minimum width for date columns
+                if (i == 9 || i == 13 || i == 14) {
+                    int currentWidth = sheet.getColumnWidth(i);
+                    if (currentWidth < 3000) {
+                        sheet.setColumnWidth(i, 3000); // Set minimum width for date columns
+                    }
+                }
             }
 
             // Add summary information
@@ -162,13 +176,93 @@ public class ProductExportService {
             summaryRow.createCell(0).setCellValue("Total Products:");
             summaryRow.createCell(1).setCellValue(products.size());
 
-            Row exportDateRow = sheet.createRow(rowNum + 3);
+            Row filterRow = sheet.createRow(rowNum + 3);
+            filterRow.createCell(0).setCellValue("Filter Applied:");
+            filterRow.createCell(1).setCellValue(getFilterDescription(filterType));
+
+            Row exportDateRow = sheet.createRow(rowNum + 4);
             exportDateRow.createCell(0).setCellValue("Exported on:");
             exportDateRow.createCell(1).setCellValue(LocalDateTime.now().format(DATETIME_FORMATTER));
 
             workbook.write(baos);
             return baos.toByteArray();
         }
+    }
+
+    /**
+     * Get filtered products based on filter type
+     */
+    private List<Product> getFilteredProducts(String filterType) {
+        List<Product> allProducts = productRepository.findAll();
+
+        switch (filterType.toLowerCase()) {
+            case "lowstock":
+                return allProducts.stream()
+                        .filter(p -> p.getQuantity() <= p.getMinStockLevel())
+                        .collect(Collectors.toList());
+
+            case "expiring":
+                LocalDate thirtyDaysFromNow = LocalDate.now().plusDays(30);
+                return allProducts.stream()
+                        .filter(p -> p.getExpiryDate() != null &&
+                                p.getExpiryDate().isBefore(thirtyDaysFromNow))
+                        .collect(Collectors.toList());
+
+            default:
+                return allProducts;
+        }
+    }
+
+    /**
+     * Get sheet name based on filter type
+     */
+    private String getSheetName(String filterType) {
+        switch (filterType.toLowerCase()) {
+            case "lowstock":
+                return "Low Stock Products";
+            case "expiring":
+                return "Expiring Products";
+            default:
+                return "All Products";
+        }
+    }
+
+    /**
+     * Get filter description
+     */
+    private String getFilterDescription(String filterType) {
+        switch (filterType.toLowerCase()) {
+            case "lowstock":
+                return "Products with quantity at or below minimum stock level";
+            case "expiring":
+                return "Products expiring within 30 days";
+            default:
+                return "All products in inventory";
+        }
+    }
+
+    /**
+     * Determine stock status
+     */
+    private String determineStockStatus(Product product) {
+        if (product.getQuantity() == 0) {
+            return "OUT_OF_STOCK";
+        } else if (product.getQuantity() <= product.getMinStockLevel()) {
+            return "LOW";
+        } else {
+            return "NORMAL";
+        }
+    }
+
+    /**
+     * Check if product is expiring soon
+     */
+    private boolean isProductExpiringSoon(Product product) {
+        if (product.getExpiryDate() == null) {
+            return false;
+        }
+        LocalDate thirtyDaysFromNow = LocalDate.now().plusDays(30);
+        return product.getExpiryDate().isBefore(thirtyDaysFromNow);
     }
 
     /**
@@ -250,6 +344,10 @@ public class ProductExportService {
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
+                // Ensure minimum width for the expiry date column
+                if (i == 8) {
+                    sheet.setColumnWidth(i, 3000);
+                }
             }
 
             // Add notes sheet
