@@ -72,6 +72,43 @@ public class FileService {
         }
     }
 
+    public String uploadUserProfileImage(MultipartFile file) {
+        validateFile(file);
+
+        try {
+            // Generate unique filename
+            String originalFilename = StringUtils.cleanPath(file.getOriginalFilename());
+            String fileExtension = getFileExtension(originalFilename);
+            String newFilename = UUID.randomUUID().toString() + "." + fileExtension;
+
+            // Create users directory if it doesn't exist
+            Path usersDir = Paths.get(uploadDir + "/users");
+            if (!Files.exists(usersDir)) {
+                Files.createDirectories(usersDir);
+            }
+
+            // Save file to disk
+            Path targetLocation = Paths.get(uploadDir + "/users/" + newFilename);
+            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+
+            // Save file record to database
+            FileUpload fileUpload = new FileUpload();
+            fileUpload.setFileName(newFilename);
+            fileUpload.setFileType(file.getContentType());
+            fileUpload.setFileSize(file.getSize());
+            fileUpload.setFilePath("/uploads/users/" + newFilename);
+            fileUpload.setUploadedBy(getCurrentUser());
+
+            fileUploadRepository.save(fileUpload);
+
+            // Return the URL path for accessing the image
+            return "/uploads/users/" + newFilename;
+
+        } catch (IOException e) {
+            throw new BusinessException("Failed to upload file: " + e.getMessage());
+        }
+    }
+
     public void deleteFile(String filePath) {
         if (filePath == null || filePath.isEmpty()) {
             return;
@@ -80,7 +117,11 @@ public class FileService {
         try {
             // Extract filename from path
             String filename = filePath.substring(filePath.lastIndexOf("/") + 1);
-            Path fileToDelete = Paths.get(uploadDir + "/products/" + filename);
+
+            // Determine the subdirectory (products or users)
+            String subDir = filePath.contains("/products/") ? "products" : "users";
+
+            Path fileToDelete = Paths.get(uploadDir + "/" + subDir + "/" + filename);
             Files.deleteIfExists(fileToDelete);
 
             // Delete database record

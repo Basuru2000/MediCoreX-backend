@@ -32,6 +32,13 @@ public class User {
     @Column(nullable = false)
     private UserRole role;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Gender gender = Gender.NOT_SPECIFIED;
+
+    @Column(name = "profile_image_url")
+    private String profileImageUrl;
+
     @Column(nullable = false)
     private Boolean active = true;
 
@@ -49,5 +56,11 @@ public class User {
         HOSPITAL_MANAGER,
         PHARMACY_STAFF,
         PROCUREMENT_OFFICER
+    }
+
+    public enum Gender {
+        MALE,
+        FEMALE,
+        NOT_SPECIFIED
     }
 }

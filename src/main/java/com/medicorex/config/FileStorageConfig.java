@@ -25,6 +25,7 @@ public class FileStorageConfig implements WebMvcConfigurer {
 
         // Create subdirectories
         new File(uploadDir + "/products").mkdirs();
+        new File(uploadDir + "/users").mkdirs();
         new File(uploadDir + "/temp").mkdirs();
     }
 

@@ -25,4 +25,12 @@ public class FileUploadController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of("imageUrl", imageUrl));
     }
+
+    @PostMapping("/upload/user-profile")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<Map<String, String>> uploadUserProfileImage(@RequestParam("file") MultipartFile file) {
+        String imageUrl = fileService.uploadUserProfileImage(file);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(Map.of("imageUrl", imageUrl));
+    }
 }
