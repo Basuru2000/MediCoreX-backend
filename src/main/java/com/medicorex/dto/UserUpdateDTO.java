@@ -5,19 +5,10 @@ import com.medicorex.entity.User.Gender;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
-public class RegisterRequest {
-    @NotBlank(message = "Username is required")
-    @Size(min = 3, max = 20, message = "Username must be between 3 and 20 characters")
-    private String username;
-
-    @NotBlank(message = "Password is required")
-    @Size(min = 6, message = "Password must be at least 6 characters")
-    private String password;
-
+public class UserUpdateDTO {
     @NotBlank(message = "Email is required")
     @Email(message = "Email should be valid")
     private String email;
@@ -28,7 +19,9 @@ public class RegisterRequest {
     @NotNull(message = "Role is required")
     private UserRole role;
 
-    private Gender gender = Gender.NOT_SPECIFIED;
+    private Gender gender;
 
     private String profileImageUrl;
+
+    private Boolean active;
 }

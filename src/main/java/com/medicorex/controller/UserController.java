@@ -2,6 +2,7 @@ package com.medicorex.controller;
 
 import com.medicorex.dto.RegisterRequest;
 import com.medicorex.dto.UserDTO;
+import com.medicorex.dto.UserUpdateDTO;
 import com.medicorex.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import java.util.List;
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+@CrossOrigin(origins = "http://localhost:5173")
 public class UserController {
 
     private final UserService userService;
@@ -36,8 +38,8 @@ public class UserController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<UserDTO> updateUser(@PathVariable Long id, @Valid @RequestBody UserDTO userDTO) {
-        return ResponseEntity.ok(userService.updateUser(id, userDTO));
+    public ResponseEntity<UserDTO> updateUser(@PathVariable Long id, @Valid @RequestBody UserUpdateDTO userUpdateDTO) {
+        return ResponseEntity.ok(userService.updateUser(id, userUpdateDTO));
     }
 
     @DeleteMapping("/{id}")

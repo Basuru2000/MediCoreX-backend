@@ -69,9 +69,10 @@ public class DataInitializer {
                 admin.setEmail("admin@medicorex.com");
                 admin.setFullName("System Administrator");
                 admin.setRole(User.UserRole.HOSPITAL_MANAGER);
+                admin.setGender(User.Gender.MALE);
                 admin.setActive(true);
                 userRepository.save(admin);
-                System.out.println("✅ Admin user created with encoded password");
+                System.out.println("✅ Admin user created with encoded password and gender");
 
                 User staff = new User();
                 staff.setUsername("staff");
@@ -79,9 +80,10 @@ public class DataInitializer {
                 staff.setEmail("staff@medicorex.com");
                 staff.setFullName("Pharmacy Staff");
                 staff.setRole(User.UserRole.PHARMACY_STAFF);
+                staff.setGender(User.Gender.FEMALE);
                 staff.setActive(true);
                 userRepository.save(staff);
-                System.out.println("✅ Staff user created with encoded password");
+                System.out.println("✅ Staff user created with encoded password and gender");
 
                 User procurement = new User();
                 procurement.setUsername("procurement");
@@ -89,11 +91,12 @@ public class DataInitializer {
                 procurement.setEmail("procurement@medicorex.com");
                 procurement.setFullName("Procurement Officer");
                 procurement.setRole(User.UserRole.PROCUREMENT_OFFICER);
+                procurement.setGender(User.Gender.NOT_SPECIFIED);
                 procurement.setActive(true);
                 userRepository.save(procurement);
-                System.out.println("✅ Procurement user created with encoded password");
+                System.out.println("✅ Procurement user created with encoded password and gender");
 
-                System.out.println("✅ All users initialized with encoded passwords!");
+                System.out.println("✅ All users initialized with encoded passwords and gender information!");
             } else {
                 System.out.println("✅ Users already exist, skipping initialization");
             }

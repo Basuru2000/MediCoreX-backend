@@ -1,6 +1,7 @@
 package com.medicorex.dto;
 
 import com.medicorex.entity.User.UserRole;
+import com.medicorex.entity.User.Gender;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -18,6 +19,8 @@ public class UserDTO {
     private String email;
     private String fullName;
     private UserRole role;
+    private Gender gender;
+    private String profileImageUrl;
     private Boolean active;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
