@@ -168,6 +168,29 @@ SET SQL_SAFE_UPDATES = 1;
 -- CREATE TABLE purchase_order_items (...);
 
 -- =====================================================
+-- HOW TO USE THIS FILE
+-- =====================================================
+-- 1. When implementing a new feature:
+--    - Find the relevant section in UPCOMING CHANGES
+--    - Copy the SQL statements
+--    - Remove the comment markers (--)
+--    - Run in MySQL
+--    - Move the section up and change status to APPLIED ✓
+--    - Add the actual implementation date
+--
+-- 2. When adding new changes:
+--    - Add to the appropriate week section
+--    - Include detailed comments about purpose
+--    - List any dependencies
+--    - Keep commented until ready to apply
+--
+-- 3. Before committing:
+--    - Ensure all APPLIED changes work
+--    - Update the "Last Updated" date
+--    - Update the total tables count
+-- =====================================================
+
+-- =====================================================
 -- END OF SCHEMA CHANGES
 -- Last Updated: 2024-01-25
 -- Total Tables: 6 (categories, users, suppliers, products, stock_transactions, file_uploads)
