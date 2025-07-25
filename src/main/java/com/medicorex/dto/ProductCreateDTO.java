@@ -21,6 +21,10 @@ public class ProductCreateDTO {
     @Size(max = 50, message = "Product code must not exceed 50 characters")
     private String code;
 
+    @Size(max = 100, message = "Barcode must not exceed 100 characters")
+    @Pattern(regexp = "^[A-Za-z0-9]*$", message = "Barcode must contain only alphanumeric characters")
+    private String barcode;
+
     @Size(max = 1000, message = "Description must not exceed 1000 characters")
     private String description;
 

@@ -33,6 +33,7 @@ public class ProductImportService {
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final BarcodeService barcodeService;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     /**
@@ -165,8 +166,8 @@ public class ProductImportService {
      * Parse product from CSV row
      */
     private Product parseProductFromCSV(String[] row, int rowNumber) {
-        if (row.length < 8) {
-            throw new IllegalArgumentException("Insufficient data. Expected at least 8 columns.");
+        if (row.length < 9) {
+            throw new IllegalArgumentException("Insufficient data. Expected at least 9 columns.");
         }
 
         Product product = new Product();
@@ -183,40 +184,52 @@ public class ProductImportService {
             product.setCode(generateProductCode());
         }
 
+        // Barcode (optional, auto-generate if empty)
+        if (row.length > 1 && !row[1].trim().isEmpty()) {
+            String barcode = row[1].trim();
+            if (productRepository.findByBarcode(barcode).isPresent()) {
+                throw new IllegalArgumentException("Barcode '" + barcode + "' already exists");
+            }
+            if (!barcodeService.isValidBarcode(barcode)) {
+                throw new IllegalArgumentException("Invalid barcode format: " + barcode);
+            }
+            product.setBarcode(barcode);
+        }
+
         // Product Name (required)
-        String name = row[1].trim();
+        String name = row[2].trim();
         if (name.isEmpty()) {
             throw new IllegalArgumentException("Product name is required");
         }
         product.setName(name);
 
         // Description (optional)
-        if (row.length > 2) {
-            product.setDescription(row[2].trim());
+        if (row.length > 3) {
+            product.setDescription(row[3].trim());
         }
 
         // Category (required)
-        String categoryName = row[3].trim();
+        String categoryName = row[4].trim();
         Category category = categoryRepository.findByName(categoryName)
                 .orElseThrow(() -> new IllegalArgumentException("Category '" + categoryName + "' not found"));
         product.setCategory(category);
 
         // Quantity (required)
         try {
-            product.setQuantity(Integer.parseInt(row[4].trim()));
+            product.setQuantity(Integer.parseInt(row[5].trim()));
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Invalid quantity: " + row[4]);
+            throw new IllegalArgumentException("Invalid quantity: " + row[5]);
         }
 
         // Min Stock Level (required)
         try {
-            product.setMinStockLevel(Integer.parseInt(row[5].trim()));
+            product.setMinStockLevel(Integer.parseInt(row[6].trim()));
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Invalid minimum stock level: " + row[5]);
+            throw new IllegalArgumentException("Invalid minimum stock level: " + row[6]);
         }
 
         // Unit (required)
-        String unit = row[6].trim();
+        String unit = row[7].trim();
         if (unit.isEmpty()) {
             throw new IllegalArgumentException("Unit is required");
         }
@@ -224,28 +237,28 @@ public class ProductImportService {
 
         // Unit Price (required)
         try {
-            product.setUnitPrice(new BigDecimal(row[7].trim()));
+            product.setUnitPrice(new BigDecimal(row[8].trim()));
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Invalid unit price: " + row[7]);
+            throw new IllegalArgumentException("Invalid unit price: " + row[8]);
         }
 
         // Expiry Date (optional)
-        if (row.length > 8 && !row[8].trim().isEmpty()) {
+        if (row.length > 9 && !row[9].trim().isEmpty()) {
             try {
-                product.setExpiryDate(LocalDate.parse(row[8].trim(), DATE_FORMATTER));
+                product.setExpiryDate(LocalDate.parse(row[9].trim(), DATE_FORMATTER));
             } catch (DateTimeParseException e) {
                 throw new IllegalArgumentException("Invalid expiry date format. Use YYYY-MM-DD");
             }
         }
 
         // Batch Number (optional)
-        if (row.length > 9) {
-            product.setBatchNumber(row[9].trim());
+        if (row.length > 10) {
+            product.setBatchNumber(row[10].trim());
         }
 
         // Manufacturer (optional)
-        if (row.length > 10) {
-            product.setManufacturer(row[10].trim());
+        if (row.length > 11) {
+            product.setManufacturer(row[11].trim());
         }
 
         return product;
@@ -269,62 +282,74 @@ public class ProductImportService {
             product.setCode(generateProductCode());
         }
 
+        // Barcode (optional, auto-generate if empty)
+        String barcode = getCellValueAsString(row.getCell(1));
+        if (!barcode.isEmpty()) {
+            if (productRepository.findByBarcode(barcode).isPresent()) {
+                throw new IllegalArgumentException("Barcode '" + barcode + "' already exists");
+            }
+            if (!barcodeService.isValidBarcode(barcode)) {
+                throw new IllegalArgumentException("Invalid barcode format: " + barcode);
+            }
+            product.setBarcode(barcode);
+        }
+
         // Product Name (required)
-        String name = getCellValueAsString(row.getCell(1));
+        String name = getCellValueAsString(row.getCell(2));
         if (name.isEmpty()) {
             throw new IllegalArgumentException("Product name is required");
         }
         product.setName(name);
 
         // Description (optional)
-        product.setDescription(getCellValueAsString(row.getCell(2)));
+        product.setDescription(getCellValueAsString(row.getCell(3)));
 
         // Category (required)
-        String categoryName = getCellValueAsString(row.getCell(3));
+        String categoryName = getCellValueAsString(row.getCell(4));
         Category category = categoryRepository.findByName(categoryName)
                 .orElseThrow(() -> new IllegalArgumentException("Category '" + categoryName + "' not found"));
         product.setCategory(category);
 
         // Quantity (required)
-        int quantity = getCellValueAsInteger(row.getCell(4));
+        int quantity = getCellValueAsInteger(row.getCell(5));
         if (quantity < 0) {
             throw new IllegalArgumentException("Quantity cannot be negative");
         }
         product.setQuantity(quantity);
 
         // Min Stock Level (required)
-        int minStock = getCellValueAsInteger(row.getCell(5));
+        int minStock = getCellValueAsInteger(row.getCell(6));
         if (minStock < 0) {
             throw new IllegalArgumentException("Minimum stock level cannot be negative");
         }
         product.setMinStockLevel(minStock);
 
         // Unit (required)
-        String unit = getCellValueAsString(row.getCell(6));
+        String unit = getCellValueAsString(row.getCell(7));
         if (unit.isEmpty()) {
             throw new IllegalArgumentException("Unit is required");
         }
         product.setUnit(unit);
 
         // Unit Price (required)
-        BigDecimal price = getCellValueAsBigDecimal(row.getCell(7));
+        BigDecimal price = getCellValueAsBigDecimal(row.getCell(8));
         if (price.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("Unit price cannot be negative");
         }
         product.setUnitPrice(price);
 
         // Expiry Date (optional)
-        Cell expiryCell = row.getCell(8);
+        Cell expiryCell = row.getCell(9);
         if (expiryCell != null) {
             LocalDate expiryDate = getCellValueAsDate(expiryCell);
             product.setExpiryDate(expiryDate);
         }
 
         // Batch Number (optional)
-        product.setBatchNumber(getCellValueAsString(row.getCell(9)));
+        product.setBatchNumber(getCellValueAsString(row.getCell(10)));
 
         // Manufacturer (optional)
-        product.setManufacturer(getCellValueAsString(row.getCell(10)));
+        product.setManufacturer(getCellValueAsString(row.getCell(11)));
 
         return product;
     }

@@ -29,6 +29,7 @@ public class ProductService {
     private final CategoryRepository categoryRepository;
     private final StockTransactionRepository stockTransactionRepository;
     private final FileService fileService;
+    private final BarcodeService barcodeService;
 
     public PageResponseDTO<ProductDTO> getAllProducts(Pageable pageable) {
         Page<Product> productPage = productRepository.findAll(pageable);
@@ -68,11 +69,30 @@ public class ProductService {
         return convertToDTO(product);
     }
 
+    public ProductDTO getProductByBarcode(String barcode) {
+        Product product = productRepository.findByBarcode(barcode)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", "barcode", barcode));
+        return convertToDTO(product);
+    }
+
     public ProductDTO createProduct(ProductCreateDTO productCreateDTO) {
         // Check if product code already exists
         if (productCreateDTO.getCode() != null &&
                 productRepository.findByCode(productCreateDTO.getCode()).isPresent()) {
             throw new BusinessException("Product with code " + productCreateDTO.getCode() + " already exists");
+        }
+
+        // Check if barcode already exists
+        if (productCreateDTO.getBarcode() != null && !productCreateDTO.getBarcode().trim().isEmpty() &&
+                productRepository.findByBarcode(productCreateDTO.getBarcode()).isPresent()) {
+            throw new BusinessException("Product with barcode " + productCreateDTO.getBarcode() + " already exists");
+        }
+
+        // Validate barcode format if provided
+        if (productCreateDTO.getBarcode() != null && !productCreateDTO.getBarcode().trim().isEmpty()) {
+            if (!barcodeService.isValidBarcode(productCreateDTO.getBarcode())) {
+                throw new BusinessException("Invalid barcode format. Barcode must be alphanumeric and at least 8 characters long.");
+            }
         }
 
         Category category = categoryRepository.findById(productCreateDTO.getCategoryId())
@@ -82,7 +102,23 @@ public class ProductService {
         updateProductFromDTO(product, productCreateDTO, category);
 
         Product savedProduct = productRepository.save(product);
-        return convertToDTO(savedProduct);
+
+        // Generate barcode if not provided
+        if (savedProduct.getBarcode() == null || savedProduct.getBarcode().trim().isEmpty()) {
+            savedProduct.setBarcode(barcodeService.generateBarcode(savedProduct));
+        }
+
+        // Generate QR code
+        try {
+            String qrCode = barcodeService.generateQRCode(savedProduct);
+            savedProduct.setQrCode(qrCode);
+        } catch (Exception e) {
+            // Log error but don't fail the product creation
+            System.err.println("Failed to generate QR code: " + e.getMessage());
+        }
+
+        Product finalProduct = productRepository.save(savedProduct);
+        return convertToDTO(finalProduct);
     }
 
     public ProductDTO updateProduct(Long id, ProductCreateDTO productCreateDTO) {
@@ -96,13 +132,49 @@ public class ProductService {
             throw new BusinessException("Product with code " + productCreateDTO.getCode() + " already exists");
         }
 
+        // Check if new barcode conflicts with another product
+        if (productCreateDTO.getBarcode() != null && !productCreateDTO.getBarcode().trim().isEmpty() &&
+                !productCreateDTO.getBarcode().equals(product.getBarcode()) &&
+                productRepository.findByBarcode(productCreateDTO.getBarcode()).isPresent()) {
+            throw new BusinessException("Product with barcode " + productCreateDTO.getBarcode() + " already exists");
+        }
+
+        // Validate barcode format if provided
+        if (productCreateDTO.getBarcode() != null && !productCreateDTO.getBarcode().trim().isEmpty()) {
+            if (!barcodeService.isValidBarcode(productCreateDTO.getBarcode())) {
+                throw new BusinessException("Invalid barcode format. Barcode must be alphanumeric and at least 8 characters long.");
+            }
+        }
+
         Category category = categoryRepository.findById(productCreateDTO.getCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category", "id", productCreateDTO.getCategoryId()));
 
         updateProductFromDTO(product, productCreateDTO, category);
 
+        // Generate barcode if not provided and doesn't exist
+        if ((product.getBarcode() == null || product.getBarcode().trim().isEmpty()) && product.getId() != null) {
+            product.setBarcode(barcodeService.generateBarcode(product));
+        }
+
+        // Regenerate QR code with updated information
+        try {
+            String qrCode = barcodeService.generateQRCode(product);
+            product.setQrCode(qrCode);
+        } catch (Exception e) {
+            // Log error but don't fail the product update
+            System.err.println("Failed to generate QR code: " + e.getMessage());
+        }
+
         Product updatedProduct = productRepository.save(product);
         return convertToDTO(updatedProduct);
+    }
+
+    public String generateBarcodeImage(String barcode) {
+        try {
+            return barcodeService.generateBarcodeImage(barcode);
+        } catch (Exception e) {
+            throw new BusinessException("Failed to generate barcode image: " + e.getMessage());
+        }
     }
 
     public void deleteProduct(Long id) {
@@ -129,6 +201,7 @@ public class ProductService {
                 .filter(product ->
                         product.getName().toLowerCase().contains(query.toLowerCase()) ||
                                 (product.getCode() != null && product.getCode().toLowerCase().contains(query.toLowerCase())) ||
+                                (product.getBarcode() != null && product.getBarcode().toLowerCase().contains(query.toLowerCase())) ||
                                 (product.getManufacturer() != null && product.getManufacturer().toLowerCase().contains(query.toLowerCase()))
                 )
                 .map(this::convertToDTO)
@@ -138,6 +211,7 @@ public class ProductService {
     private void updateProductFromDTO(Product product, ProductCreateDTO dto, Category category) {
         product.setName(dto.getName());
         product.setCode(dto.getCode());
+        product.setBarcode(dto.getBarcode());
         product.setDescription(dto.getDescription());
         product.setCategory(category);
         product.setQuantity(dto.getQuantity());
@@ -158,6 +232,8 @@ public class ProductService {
                 .id(product.getId())
                 .name(product.getName())
                 .code(product.getCode())
+                .barcode(product.getBarcode())
+                .qrCode(product.getQrCode())
                 .description(product.getDescription())
                 .categoryId(product.getCategory().getId())
                 .categoryName(product.getCategory().getName())

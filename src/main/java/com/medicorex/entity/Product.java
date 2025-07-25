@@ -24,6 +24,12 @@ public class Product {
     @Column(unique = true)
     private String code;
 
+    @Column(unique = true)
+    private String barcode;
+
+    @Column(columnDefinition = "TEXT")
+    private String qrCode;
+
     private String description;
 
     @ManyToOne

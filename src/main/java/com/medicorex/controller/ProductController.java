@@ -1,13 +1,10 @@
 package com.medicorex.controller;
 
-import com.medicorex.dto.PageResponseDTO;
-import com.medicorex.dto.ProductCreateDTO;
-import com.medicorex.dto.ProductDTO;
-import com.medicorex.dto.ImportResultDTO;
-import com.medicorex.dto.ImportErrorDTO;
+import com.medicorex.dto.*;
 import com.medicorex.service.ProductService;
 import com.medicorex.service.ProductExportService;
 import com.medicorex.service.ProductImportService;
+import com.medicorex.service.BarcodeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -25,6 +22,7 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/products")
@@ -35,6 +33,7 @@ public class ProductController {
     private final ProductService productService;
     private final ProductExportService exportService;
     private final ProductImportService importService;
+    private final BarcodeService barcodeService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
@@ -85,6 +84,30 @@ public class ProductController {
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
     public ResponseEntity<ProductDTO> getProductByCode(@PathVariable String code) {
         return ResponseEntity.ok(productService.getProductByCode(code));
+    }
+
+    @GetMapping("/barcode/{barcode}")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<ProductDTO> getProductByBarcode(@PathVariable String barcode) {
+        return ResponseEntity.ok(productService.getProductByBarcode(barcode));
+    }
+
+    @PostMapping("/barcode/scan")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<ProductDTO> scanBarcode(@Valid @RequestBody BarcodeScanDTO scanDTO) {
+        try {
+            String barcode = barcodeService.decodeBarcode(scanDTO.getBarcodeImage());
+            return ResponseEntity.ok(productService.getProductByBarcode(barcode));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+    }
+
+    @GetMapping("/barcode/generate/{barcode}")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<Map<String, String>> generateBarcodeImage(@PathVariable String barcode) {
+        String barcodeImage = productService.generateBarcodeImage(barcode);
+        return ResponseEntity.ok(Map.of("barcodeImage", barcodeImage));
     }
 
     @GetMapping("/search")

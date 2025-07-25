@@ -18,60 +18,60 @@ USE medicorex_db;
 CREATE TABLE IF NOT EXISTS categories (
                                           id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                           name VARCHAR(100) UNIQUE NOT NULL,
-    description TEXT
-    );
+                                          description TEXT
+);
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
                                      id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                      username VARCHAR(50) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    full_name VARCHAR(100) NOT NULL,
-    role VARCHAR(50) NOT NULL,
-    active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    );
+                                     password VARCHAR(255) NOT NULL,
+                                     email VARCHAR(100) UNIQUE NOT NULL,
+                                     full_name VARCHAR(100) NOT NULL,
+                                     role VARCHAR(50) NOT NULL,
+                                     active BOOLEAN DEFAULT TRUE,
+                                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 
 -- Suppliers table
 CREATE TABLE IF NOT EXISTS suppliers (
                                          id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                          name VARCHAR(100) NOT NULL,
-    contact_email VARCHAR(100) UNIQUE NOT NULL,
-    phone VARCHAR(20),
-    address TEXT,
-    contact_person VARCHAR(100),
-    active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    );
+                                         contact_email VARCHAR(100) UNIQUE NOT NULL,
+                                         phone VARCHAR(20),
+                                         address TEXT,
+                                         contact_person VARCHAR(100),
+                                         active BOOLEAN DEFAULT TRUE,
+                                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 
 -- Products table
 CREATE TABLE IF NOT EXISTS products (
                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                         name VARCHAR(200) NOT NULL,
-    code VARCHAR(50) UNIQUE,
-    description TEXT,
-    category_id BIGINT NOT NULL,
-    quantity INT DEFAULT 0,
-    min_stock_level INT NOT NULL,
-    unit VARCHAR(50) NOT NULL,
-    unit_price DECIMAL(10,2) NOT NULL,
-    expiry_date DATE,
-    batch_number VARCHAR(50),
-    manufacturer VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (category_id) REFERENCES categories(id)
-    );
+                                        code VARCHAR(50) UNIQUE,
+                                        description TEXT,
+                                        category_id BIGINT NOT NULL,
+                                        quantity INT DEFAULT 0,
+                                        min_stock_level INT NOT NULL,
+                                        unit VARCHAR(50) NOT NULL,
+                                        unit_price DECIMAL(10,2) NOT NULL,
+                                        expiry_date DATE,
+                                        batch_number VARCHAR(50),
+                                        manufacturer VARCHAR(100),
+                                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                        FOREIGN KEY (category_id) REFERENCES categories(id)
+);
 
 -- Insert initial categories
 INSERT INTO categories (name, description) VALUES
                                                ('Medications', 'Pharmaceutical drugs and medicines'),
                                                ('Medical Supplies', 'Consumable medical supplies'),
                                                ('Equipment', 'Medical equipment and devices')
-    ON DUPLICATE KEY UPDATE name=name;
+ON DUPLICATE KEY UPDATE name=name;
 
 -- =====================================================
 -- Date: 2024-01-15
@@ -86,13 +86,13 @@ CREATE TABLE IF NOT EXISTS stock_transactions (
                                                   quantity INT NOT NULL,
                                                   balance_after INT NOT NULL,
                                                   type VARCHAR(20) NOT NULL,
-    reason VARCHAR(255) NOT NULL,
-    reference VARCHAR(100),
-    performed_by BIGINT NOT NULL,
-    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_id) REFERENCES products(id),
-    FOREIGN KEY (performed_by) REFERENCES users(id)
-    );
+                                                  reason VARCHAR(255) NOT NULL,
+                                                  reference VARCHAR(100),
+                                                  performed_by BIGINT NOT NULL,
+                                                  transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                  FOREIGN KEY (product_id) REFERENCES products(id),
+                                                  FOREIGN KEY (performed_by) REFERENCES users(id)
+);
 
 -- =====================================================
 -- Date: 2024-01-20
@@ -107,13 +107,13 @@ ALTER TABLE products ADD COLUMN image_url VARCHAR(500) AFTER manufacturer;
 CREATE TABLE IF NOT EXISTS file_uploads (
                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                             file_name VARCHAR(255) NOT NULL,
-    file_type VARCHAR(100),
-    file_size BIGINT,
-    file_path VARCHAR(500) NOT NULL,
-    uploaded_by BIGINT,
-    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (uploaded_by) REFERENCES users(id)
-    );
+                                            file_type VARCHAR(100),
+                                            file_size BIGINT,
+                                            file_path VARCHAR(500) NOT NULL,
+                                            uploaded_by BIGINT,
+                                            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                            FOREIGN KEY (uploaded_by) REFERENCES users(id)
+);
 
 -- =====================================================
 -- Date: 2024-01-22
@@ -151,15 +151,21 @@ UPDATE users SET gender = 'NOT_SPECIFIED' WHERE gender IS NULL;
 SET SQL_SAFE_UPDATES = 1;
 
 -- =====================================================
+-- Date: 2024-01-30
+-- Feature: Barcode/QR Code Support
+-- Developer: Week 3-4 Enhancement
+-- Status: APPLIED ✓
+-- =====================================================
+-- Add barcode and QR code columns to products
+ALTER TABLE products ADD COLUMN barcode VARCHAR(100) UNIQUE AFTER code;
+ALTER TABLE products ADD COLUMN qr_code TEXT AFTER barcode;
+
+-- Create index for faster barcode lookups
+CREATE INDEX idx_product_barcode ON products(barcode);
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
-
--- Date: TBD
--- Feature: Barcode/QR Code Support
--- Status: NOT APPLIED ⏳
--- ALTER TABLE products ADD COLUMN barcode VARCHAR(100) UNIQUE AFTER code;
--- ALTER TABLE products ADD COLUMN qr_code VARCHAR(255) AFTER barcode;
--- CREATE INDEX idx_product_barcode ON products(barcode);
 
 -- Date: TBD
 -- Feature: Purchase Orders (Week 6-7)
@@ -192,6 +198,6 @@ SET SQL_SAFE_UPDATES = 1;
 
 -- =====================================================
 -- END OF SCHEMA CHANGES
--- Last Updated: 2024-01-25
+-- Last Updated: 2024-01-30
 -- Total Tables: 6 (categories, users, suppliers, products, stock_transactions, file_uploads)
 -- =====================================================
