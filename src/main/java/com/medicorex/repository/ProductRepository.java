@@ -16,6 +16,8 @@ import java.util.Optional;
 public interface ProductRepository extends JpaRepository<Product, Long> {
     Optional<Product> findByCode(String code);
 
+    Optional<Product> findByBarcode(String barcode);
+
     Page<Product> findByCategoryId(Long categoryId, Pageable pageable);
 
     @Query("SELECT COUNT(p) FROM Product p WHERE p.category.id = :categoryId")
@@ -31,6 +33,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p FROM Product p WHERE " +
             "LOWER(p.name) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
             "LOWER(p.code) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
+            "LOWER(p.barcode) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
             "LOWER(p.manufacturer) LIKE LOWER(CONCAT('%', :query, '%'))")
     Page<Product> searchProducts(@Param("query") String query, Pageable pageable);
 }

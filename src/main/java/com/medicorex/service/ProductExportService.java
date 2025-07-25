@@ -40,7 +40,7 @@ public class ProductExportService {
 
             // Write header
             String[] header = {
-                    "ID", "Product Code", "Product Name", "Description",
+                    "ID", "Product Code", "Barcode", "Product Name", "Description",
                     "Category", "Quantity", "Min Stock Level", "Unit",
                     "Unit Price", "Expiry Date", "Batch Number",
                     "Manufacturer", "Stock Status", "Created Date", "Last Updated"
@@ -53,6 +53,7 @@ public class ProductExportService {
                 String[] data = {
                         product.getId().toString(),
                         product.getCode() != null ? product.getCode() : "",
+                        product.getBarcode() != null ? product.getBarcode() : "",
                         product.getName(),
                         product.getDescription() != null ? product.getDescription() : "",
                         product.getCategory().getName(),
@@ -112,7 +113,7 @@ public class ProductExportService {
             // Create header row
             Row headerRow = sheet.createRow(0);
             String[] headers = {
-                    "ID", "Product Code", "Product Name", "Description",
+                    "ID", "Product Code", "Barcode", "Product Name", "Description",
                     "Category", "Quantity", "Min Stock Level", "Unit",
                     "Unit Price", "Expiry Date", "Batch Number",
                     "Manufacturer", "Stock Status", "Created Date", "Last Updated"
@@ -132,19 +133,20 @@ public class ProductExportService {
 
                 row.createCell(0).setCellValue(product.getId());
                 row.createCell(1).setCellValue(product.getCode() != null ? product.getCode() : "");
-                row.createCell(2).setCellValue(product.getName());
-                row.createCell(3).setCellValue(product.getDescription() != null ? product.getDescription() : "");
-                row.createCell(4).setCellValue(product.getCategory().getName());
-                row.createCell(5).setCellValue(product.getQuantity());
-                row.createCell(6).setCellValue(product.getMinStockLevel());
-                row.createCell(7).setCellValue(product.getUnit());
+                row.createCell(2).setCellValue(product.getBarcode() != null ? product.getBarcode() : "");
+                row.createCell(3).setCellValue(product.getName());
+                row.createCell(4).setCellValue(product.getDescription() != null ? product.getDescription() : "");
+                row.createCell(5).setCellValue(product.getCategory().getName());
+                row.createCell(6).setCellValue(product.getQuantity());
+                row.createCell(7).setCellValue(product.getMinStockLevel());
+                row.createCell(8).setCellValue(product.getUnit());
 
-                Cell priceCell = row.createCell(8);
+                Cell priceCell = row.createCell(9);
                 priceCell.setCellValue(product.getUnitPrice().doubleValue());
                 priceCell.setCellStyle(currencyStyle);
 
                 // Fix date formatting
-                Cell dateCell = row.createCell(9);
+                Cell dateCell = row.createCell(10);
                 if (product.getExpiryDate() != null) {
                     dateCell.setCellValue(product.getExpiryDate().format(DATE_FORMATTER));
                     dateCell.setCellStyle(dateStyle);
@@ -152,18 +154,18 @@ public class ProductExportService {
                     dateCell.setCellValue("");
                 }
 
-                row.createCell(10).setCellValue(product.getBatchNumber() != null ? product.getBatchNumber() : "");
-                row.createCell(11).setCellValue(product.getManufacturer() != null ? product.getManufacturer() : "");
-                row.createCell(12).setCellValue(stockStatus);
-                row.createCell(13).setCellValue(product.getCreatedAt().format(DATETIME_FORMATTER));
-                row.createCell(14).setCellValue(product.getUpdatedAt() != null ? product.getUpdatedAt().format(DATETIME_FORMATTER) : "");
+                row.createCell(11).setCellValue(product.getBatchNumber() != null ? product.getBatchNumber() : "");
+                row.createCell(12).setCellValue(product.getManufacturer() != null ? product.getManufacturer() : "");
+                row.createCell(13).setCellValue(stockStatus);
+                row.createCell(14).setCellValue(product.getCreatedAt().format(DATETIME_FORMATTER));
+                row.createCell(15).setCellValue(product.getUpdatedAt() != null ? product.getUpdatedAt().format(DATETIME_FORMATTER) : "");
             }
 
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
                 // Ensure minimum width for date columns
-                if (i == 9 || i == 13 || i == 14) {
+                if (i == 10 || i == 14 || i == 15) {
                     int currentWidth = sheet.getColumnWidth(i);
                     if (currentWidth < 3000) {
                         sheet.setColumnWidth(i, 3000); // Set minimum width for date columns
@@ -293,7 +295,7 @@ public class ProductExportService {
             // Create headers
             Row headerRow = sheet.createRow(0);
             String[] headers = {
-                    "Product Code*", "Product Name*", "Description",
+                    "Product Code*", "Barcode", "Product Name*", "Description",
                     "Category Name*", "Quantity*", "Min Stock Level*",
                     "Unit*", "Unit Price*", "Expiry Date",
                     "Batch Number", "Manufacturer"
@@ -308,6 +310,7 @@ public class ProductExportService {
             // Create instruction row
             Row instructionRow = sheet.createRow(1);
             String[] instructions = {
+                    "Optional (auto-generated if empty)",
                     "Optional (auto-generated if empty)",
                     "Required",
                     "Optional",
@@ -330,22 +333,23 @@ public class ProductExportService {
             // Create sample data
             Row sampleRow = sheet.createRow(2);
             sampleRow.createCell(0).setCellValue("MED001");
-            sampleRow.createCell(1).setCellValue("Paracetamol 500mg");
-            sampleRow.createCell(2).setCellValue("Pain relief medication");
-            sampleRow.createCell(3).setCellValue("Medications");
-            sampleRow.createCell(4).setCellValue(100);
-            sampleRow.createCell(5).setCellValue(20);
-            sampleRow.createCell(6).setCellValue("Tablets");
-            sampleRow.createCell(7).setCellValue(5.99);
-            sampleRow.createCell(8).setCellValue("2025-12-31");
-            sampleRow.createCell(9).setCellValue("BATCH001");
-            sampleRow.createCell(10).setCellValue("Generic Pharma");
+            sampleRow.createCell(1).setCellValue("MED000001234567");
+            sampleRow.createCell(2).setCellValue("Paracetamol 500mg");
+            sampleRow.createCell(3).setCellValue("Pain relief medication");
+            sampleRow.createCell(4).setCellValue("Medications");
+            sampleRow.createCell(5).setCellValue(100);
+            sampleRow.createCell(6).setCellValue(20);
+            sampleRow.createCell(7).setCellValue("Tablets");
+            sampleRow.createCell(8).setCellValue(5.99);
+            sampleRow.createCell(9).setCellValue("2025-12-31");
+            sampleRow.createCell(10).setCellValue("BATCH001");
+            sampleRow.createCell(11).setCellValue("Generic Pharma");
 
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
                 // Ensure minimum width for the expiry date column
-                if (i == 8) {
+                if (i == 9) {
                     sheet.setColumnWidth(i, 3000);
                 }
             }
@@ -362,16 +366,19 @@ public class ProductExportService {
             noteRow3.createCell(0).setCellValue("2. Category Name must match an existing category in the system");
 
             Row noteRow4 = notesSheet.createRow(4);
-            noteRow4.createCell(0).setCellValue("3. Product Code will be auto-generated if left empty");
+            noteRow4.createCell(0).setCellValue("3. Product Code and Barcode will be auto-generated if left empty");
 
             Row noteRow5 = notesSheet.createRow(5);
-            noteRow5.createCell(0).setCellValue("4. Dates should be in YYYY-MM-DD format");
+            noteRow5.createCell(0).setCellValue("4. Barcodes must be alphanumeric and at least 8 characters if provided");
 
             Row noteRow6 = notesSheet.createRow(6);
-            noteRow6.createCell(0).setCellValue("5. Do not modify the header row");
+            noteRow6.createCell(0).setCellValue("5. Dates should be in YYYY-MM-DD format");
 
             Row noteRow7 = notesSheet.createRow(7);
-            noteRow7.createCell(0).setCellValue("6. Delete the instruction row (row 2) before importing");
+            noteRow7.createCell(0).setCellValue("6. Do not modify the header row");
+
+            Row noteRow8 = notesSheet.createRow(8);
+            noteRow8.createCell(0).setCellValue("7. Delete the instruction row (row 2) before importing");
 
             workbook.write(baos);
             return baos.toByteArray();
