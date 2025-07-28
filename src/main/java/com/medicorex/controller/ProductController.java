@@ -5,6 +5,8 @@ import com.medicorex.service.ProductService;
 import com.medicorex.service.ProductExportService;
 import com.medicorex.service.ProductImportService;
 import com.medicorex.service.BarcodeService;
+import com.medicorex.exception.ResourceNotFoundException;
+import com.medicorex.exception.BarcodeDecodeException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +25,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
 @RestController
 @RequestMapping("/api/products")
@@ -94,12 +97,35 @@ public class ProductController {
 
     @PostMapping("/barcode/scan")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
-    public ResponseEntity<ProductDTO> scanBarcode(@Valid @RequestBody BarcodeScanDTO scanDTO) {
+    public ResponseEntity<?> scanBarcode(@Valid @RequestBody BarcodeScanDTO scanDTO) {
         try {
+            // First, try to decode the barcode
             String barcode = barcodeService.decodeBarcode(scanDTO.getBarcodeImage());
-            return ResponseEntity.ok(productService.getProductByBarcode(barcode));
+
+            // Try to find a product with this barcode
+            try {
+                ProductDTO product = productService.getProductByBarcode(barcode);
+                // Return the product if found
+                return ResponseEntity.ok(product);
+            } catch (ResourceNotFoundException e) {
+                // No product found, just return the barcode
+                Map<String, String> response = new HashMap<>();
+                response.put("barcode", barcode);
+                response.put("message", "Barcode decoded successfully but no matching product found");
+                return ResponseEntity.ok(response);
+            }
+        } catch (NotFoundException e) {
+            // No barcode could be decoded
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No barcode found in the image");
+            errorResponse.put("message", "Please ensure the image contains a clear, readable barcode");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            // General error
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Failed to process barcode");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
     }
 
