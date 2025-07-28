@@ -114,7 +114,7 @@ public class ProductController {
                 response.put("message", "Barcode decoded successfully but no matching product found");
                 return ResponseEntity.ok(response);
             }
-        } catch (NotFoundException e) {
+        } catch (BarcodeDecodeException e) {
             // No barcode could be decoded
             Map<String, String> errorResponse = new HashMap<>();
             errorResponse.put("error", "No barcode found in the image");
