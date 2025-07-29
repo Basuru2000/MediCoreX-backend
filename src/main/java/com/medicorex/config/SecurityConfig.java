@@ -70,6 +70,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/categories/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
                         .requestMatchers("/api/stock/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
                         .requestMatchers("/api/files/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
+                        .requestMatchers("/api/expiry/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().authenticated()
                 );

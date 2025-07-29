@@ -164,14 +164,67 @@ ALTER TABLE products ADD COLUMN qr_code TEXT AFTER barcode;
 CREATE INDEX idx_product_barcode ON products(barcode);
 
 -- =====================================================
+-- Date: 2024-01-XX (Update with actual date)
+-- Feature: Multi-tier Alert Configuration (Week 5)
+-- Developer: Week 5 Implementation
+-- Status: APPLIED ✓
+-- =====================================================
+-- Expiry Alert Configuration table
+CREATE TABLE IF NOT EXISTS expiry_alert_configs (
+                                                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                    tier_name VARCHAR(100) NOT NULL,
+                                                    days_before_expiry INT NOT NULL,
+                                                    severity ENUM('INFO', 'WARNING', 'CRITICAL') NOT NULL,
+                                                    description TEXT,
+                                                    active BOOLEAN DEFAULT TRUE NOT NULL,
+                                                    notify_roles VARCHAR(255), -- Comma-separated roles
+                                                    color_code VARCHAR(7), -- Hex color for UI display
+                                                    sort_order INT DEFAULT 0,
+                                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                    UNIQUE KEY unique_days_before (days_before_expiry),
+                                                    INDEX idx_active_days (active, days_before_expiry)
+);
+
+-- Expiry Alerts table (for tracking generated alerts)
+CREATE TABLE IF NOT EXISTS expiry_alerts (
+                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                             product_id BIGINT NOT NULL,
+                                             config_id BIGINT NOT NULL,
+                                             batch_number VARCHAR(50),
+                                             alert_date DATE NOT NULL,
+                                             expiry_date DATE NOT NULL,
+                                             quantity_affected INT NOT NULL,
+                                             status ENUM('PENDING', 'SENT', 'ACKNOWLEDGED', 'RESOLVED') DEFAULT 'PENDING',
+                                             acknowledged_by BIGINT,
+                                             acknowledged_at TIMESTAMP NULL,
+                                             notes TEXT,
+                                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                             FOREIGN KEY (product_id) REFERENCES products(id),
+                                             FOREIGN KEY (config_id) REFERENCES expiry_alert_configs(id),
+                                             FOREIGN KEY (acknowledged_by) REFERENCES users(id),
+                                             INDEX idx_status_alert_date (status, alert_date),
+                                             INDEX idx_product_status (product_id, status)
+);
+
+-- Insert default alert configurations
+INSERT INTO expiry_alert_configs (tier_name, days_before_expiry, severity, description, notify_roles, color_code, sort_order) VALUES
+                                                                                                                                  ('Critical Alert', 7, 'CRITICAL', 'Products expiring within 1 week', 'HOSPITAL_MANAGER,PHARMACY_STAFF', '#d32f2f', 1),
+                                                                                                                                  ('High Priority', 30, 'WARNING', 'Products expiring within 30 days', 'HOSPITAL_MANAGER,PHARMACY_STAFF', '#f57c00', 2),
+                                                                                                                                  ('Medium Priority', 60, 'WARNING', 'Products expiring within 60 days', 'PHARMACY_STAFF', '#fbc02d', 3),
+                                                                                                                                  ('Low Priority', 90, 'INFO', 'Products expiring within 90 days', 'PHARMACY_STAFF', '#388e3c', 4),
+                                                                                                                                  ('Early Warning', 180, 'INFO', 'Products expiring within 6 months', 'PROCUREMENT_OFFICER', '#1976d2', 5)
+ON DUPLICATE KEY UPDATE tier_name=tier_name;
+
+-- Add index for better query performance on products table
+-- Note: This uses standard MySQL syntax, not conditional index
+CREATE INDEX idx_product_expiry ON products(expiry_date);
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 
--- Date: TBD
--- Feature: Purchase Orders (Week 6-7)
--- Status: NOT APPLIED ⏳
--- CREATE TABLE purchase_orders (...);
--- CREATE TABLE purchase_order_items (...);
 
 -- =====================================================
 -- HOW TO USE THIS FILE
@@ -198,6 +251,6 @@ CREATE INDEX idx_product_barcode ON products(barcode);
 
 -- =====================================================
 -- END OF SCHEMA CHANGES
--- Last Updated: 2024-01-30
--- Total Tables: 6 (categories, users, suppliers, products, stock_transactions, file_uploads)
+-- Last Updated: 2024-01-XX (Update with today's date)
+-- Total Tables: 8 (categories, users, suppliers, products, stock_transactions, file_uploads, expiry_alert_configs, expiry_alerts)
 -- =====================================================
