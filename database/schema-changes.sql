@@ -222,6 +222,38 @@ ON DUPLICATE KEY UPDATE tier_name=tier_name;
 CREATE INDEX idx_product_expiry ON products(expiry_date);
 
 -- =====================================================
+-- Date: 2024-02-XX
+-- Feature: Automated Daily Expiry Checks (Week 5)
+-- Developer: Week 5 Implementation
+-- Status: PENDING
+-- =====================================================
+-- Expiry Check Log table to track scheduled job execution
+CREATE TABLE IF NOT EXISTS expiry_check_logs (
+                                                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                 check_date DATE NOT NULL,
+                                                 start_time TIMESTAMP NOT NULL,
+                                                 end_time TIMESTAMP NULL,
+                                                 status ENUM('RUNNING', 'COMPLETED', 'FAILED') NOT NULL DEFAULT 'RUNNING',
+                                                 products_checked INT DEFAULT 0,
+                                                 alerts_generated INT DEFAULT 0,
+                                                 error_message TEXT,
+                                                 execution_time_ms BIGINT,
+                                                 created_by VARCHAR(50) DEFAULT 'SYSTEM',
+                                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                 UNIQUE KEY unique_check_date (check_date),
+                                                 INDEX idx_status_date (status, check_date)
+);
+
+-- Add composite index for efficient expiry date queries
+CREATE INDEX idx_product_expiry_quantity ON products(expiry_date, quantity);
+
+-- Add batch processing status to alerts
+ALTER TABLE expiry_alerts
+    ADD COLUMN check_log_id BIGINT AFTER config_id,
+    ADD CONSTRAINT fk_alert_check_log
+        FOREIGN KEY (check_log_id) REFERENCES expiry_check_logs(id);
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 
@@ -251,6 +283,6 @@ CREATE INDEX idx_product_expiry ON products(expiry_date);
 
 -- =====================================================
 -- END OF SCHEMA CHANGES
--- Last Updated: 2024-01-XX (Update with today's date)
--- Total Tables: 8 (categories, users, suppliers, products, stock_transactions, file_uploads, expiry_alert_configs, expiry_alerts)
+-- Last Updated: 2024-02-XX (Update with today's date)
+-- Total Tables: 9 (categories, users, suppliers, products, stock_transactions, file_uploads, expiry_alert_configs, expiry_alerts, expiry_check_logs)
 -- =====================================================
