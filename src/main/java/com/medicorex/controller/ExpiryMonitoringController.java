@@ -3,6 +3,7 @@ package com.medicorex.controller;
 import com.medicorex.dto.ExpiryCheckResultDTO;
 import com.medicorex.service.expiry.ExpiryMonitoringService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -12,6 +13,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/expiry/monitoring")
 @RequiredArgsConstructor
@@ -27,6 +29,16 @@ public class ExpiryMonitoringController {
     @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
     public ResponseEntity<ExpiryCheckResultDTO> triggerExpiryCheck() {
         ExpiryCheckResultDTO result = monitoringService.performManualExpiryCheck();
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Force expiry check (bypasses restrictions) - Admin only
+     */
+    @PostMapping("/check/force")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<ExpiryCheckResultDTO> forceExpiryCheck() {
+        ExpiryCheckResultDTO result = monitoringService.forceExpiryCheck();
         return ResponseEntity.ok(result);
     }
 
@@ -54,16 +66,25 @@ public class ExpiryMonitoringController {
     }
 
     /**
+     * Get today's check summary
+     */
+    @GetMapping("/today-summary")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
+    public ResponseEntity<Map<String, Object>> getTodayCheckSummary() {
+        return ResponseEntity.ok(monitoringService.getTodayCheckSummary());
+    }
+
+    /**
      * Get monitoring dashboard stats
      */
     @GetMapping("/dashboard")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
     public ResponseEntity<Map<String, Object>> getDashboardStats() {
-        // This would aggregate various monitoring stats
         Map<String, Object> stats = Map.of(
                 "lastCheckDate", LocalDate.now(),
                 "checkHistory", monitoringService.getCheckHistory(),
-                "message", "Dashboard stats endpoint - implement as needed"
+                "todaySummary", monitoringService.getTodayCheckSummary(),
+                "message", "Dashboard stats endpoint"
         );
         return ResponseEntity.ok(stats);
     }

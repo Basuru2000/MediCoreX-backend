@@ -7,6 +7,7 @@ import com.medicorex.entity.ExpiryCheckLog.CheckStatus;
 import com.medicorex.repository.ExpiryCheckLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,10 @@ public class ExpiryMonitoringService {
     private final ExpiryCheckLogRepository checkLogRepository;
     private final ExpiryAlertGenerator alertGenerator;
 
+    // Configuration to allow multiple manual checks per day (useful for testing)
+    @Value("${expiry.check.allow-multiple-manual:true}")
+    private boolean allowMultipleManualChecks;
+
     /**
      * Scheduled task to run daily at 2 AM
      * Cron expression: second minute hour day month weekday
@@ -35,7 +40,15 @@ public class ExpiryMonitoringService {
     @Transactional
     public void performDailyExpiryCheck() {
         log.info("Starting scheduled daily expiry check");
-        executeExpiryCheck(LocalDate.now(), "SCHEDULED");
+
+        // For scheduled checks, we always check if one has been completed today
+        LocalDate today = LocalDate.now();
+        if (checkLogRepository.hasCompletedCheckForDate(today)) {
+            log.warn("Scheduled expiry check already completed for today, skipping");
+            return;
+        }
+
+        executeExpiryCheck(today, "SCHEDULED");
     }
 
     /**
@@ -46,13 +59,39 @@ public class ExpiryMonitoringService {
         log.info("Starting manual expiry check");
         LocalDate today = LocalDate.now();
 
-        // Check if already run today
-        if (checkLogRepository.hasCompletedCheckForDate(today)) {
-            log.warn("Expiry check already completed for today");
-            throw new IllegalStateException("Expiry check has already been completed for today");
+        // Check if we should restrict manual checks
+        if (!allowMultipleManualChecks) {
+            // Check if already run today (any type)
+            if (checkLogRepository.hasCompletedCheckForDate(today)) {
+                log.warn("Expiry check already completed for today and multiple manual checks are disabled");
+
+                // Instead of throwing exception, return the existing check result
+                ExpiryCheckLog existingCheck = checkLogRepository.findByCheckDate(today)
+                        .orElseThrow(() -> new IllegalStateException("Check record not found"));
+
+                ExpiryCheckResultDTO result = buildCheckResultDTO(existingCheck);
+                result.setErrorMessage("Expiry check already completed for today. Enable multiple manual checks in configuration to run again.");
+                return result;
+            }
+        } else {
+            // In development/testing mode, just log a warning about multiple checks
+            long checksToday = checkLogRepository.countByCheckDateAndStatus(today, CheckStatus.COMPLETED);
+            if (checksToday > 0) {
+                log.info("Running additional manual check for today (check #{} for {})",
+                        checksToday + 1, today);
+            }
         }
 
         return executeExpiryCheck(today, "MANUAL");
+    }
+
+    /**
+     * Force expiry check (admin only) - bypasses all restrictions
+     */
+    @Transactional
+    public ExpiryCheckResultDTO forceExpiryCheck() {
+        log.warn("FORCE expiry check initiated - bypassing all restrictions");
+        return executeExpiryCheck(LocalDate.now(), "FORCE_MANUAL");
     }
 
     /**
@@ -60,12 +99,13 @@ public class ExpiryMonitoringService {
      */
     private ExpiryCheckResultDTO executeExpiryCheck(LocalDate checkDate, String triggeredBy) {
         LocalDateTime startTime = LocalDateTime.now();
+
+        // Clean up any stale running checks first
+        cleanupStaleChecks();
+
         ExpiryCheckLog checkLog = createCheckLog(checkDate, triggeredBy);
 
         try {
-            // Clean up any stale running checks
-            cleanupStaleChecks();
-
             // Generate alerts
             AlertGenerationReportDTO report = alertGenerator.generateAlertsForDate(checkDate, checkLog.getId());
 
@@ -79,7 +119,8 @@ public class ExpiryMonitoringService {
 
             checkLog = checkLogRepository.save(checkLog);
 
-            log.info("Expiry check completed successfully. Products: {}, Alerts: {}, Time: {}ms",
+            log.info("Expiry check completed successfully. Type: {}, Products: {}, Alerts: {}, Time: {}ms",
+                    triggeredBy,
                     report.getTotalProductsProcessed(),
                     report.getTotalAlertsGenerated(),
                     checkLog.getExecutionTimeMs());
@@ -115,7 +156,8 @@ public class ExpiryMonitoringService {
 
         for (ExpiryCheckLog check : runningChecks) {
             if (check.getStartTime().isBefore(oneHourAgo)) {
-                log.warn("Cleaning up stale check: {}", check.getId());
+                log.warn("Cleaning up stale check: {} started at {}",
+                        check.getId(), check.getStartTime());
                 check.setStatus(CheckStatus.FAILED);
                 check.setEndTime(LocalDateTime.now());
                 check.setErrorMessage("Check timed out after 1 hour");
@@ -155,6 +197,34 @@ public class ExpiryMonitoringService {
         return checkLogRepository.findByCheckDate(date)
                 .map(this::buildCheckResultDTO)
                 .orElse(null);
+    }
+
+    /**
+     * Get today's check summary
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getTodayCheckSummary() {
+        LocalDate today = LocalDate.now();
+        List<ExpiryCheckLog> todayChecks = checkLogRepository.findAllByCheckDateOrderByStartTimeDesc(today);
+
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("date", today);
+        summary.put("totalChecks", todayChecks.size());
+        summary.put("scheduledChecks", todayChecks.stream()
+                .filter(c -> "SCHEDULED".equals(c.getCreatedBy()))
+                .count());
+        summary.put("manualChecks", todayChecks.stream()
+                .filter(c -> "MANUAL".equals(c.getCreatedBy()) || "FORCE_MANUAL".equals(c.getCreatedBy()))
+                .count());
+        summary.put("completedChecks", todayChecks.stream()
+                .filter(c -> CheckStatus.COMPLETED.equals(c.getStatus()))
+                .count());
+        summary.put("failedChecks", todayChecks.stream()
+                .filter(c -> CheckStatus.FAILED.equals(c.getStatus()))
+                .count());
+        summary.put("lastCheck", todayChecks.isEmpty() ? null : buildCheckResultDTO(todayChecks.get(0)));
+
+        return summary;
     }
 
     /**
