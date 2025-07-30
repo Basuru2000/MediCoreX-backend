@@ -254,6 +254,36 @@ ALTER TABLE expiry_alerts
         FOREIGN KEY (check_log_id) REFERENCES expiry_check_logs(id);
 
 -- =====================================================
+-- Date: 2024-02-XX (Update with today's date)
+-- Feature: Allow Multiple Manual Expiry Checks (Week 5 Enhancement)
+-- Developer: Week 5 Implementation
+-- Status: PENDING -> Change to APPLIED ✓ after running
+-- =====================================================
+-- Purpose: Remove unique constraint on check_date to allow multiple manual checks
+-- during development and testing. The application logic controls whether
+-- multiple checks are allowed based on configuration.
+
+-- Check if the constraint exists before dropping
+-- Note: The constraint name might vary, check with:
+-- SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+-- WHERE TABLE_SCHEMA = 'medicorex_db' AND TABLE_NAME = 'expiry_check_logs' AND CONSTRAINT_TYPE = 'UNIQUE';
+
+-- Drop the unique constraint on check_date
+ALTER TABLE expiry_check_logs DROP INDEX unique_check_date;
+
+-- Add a composite index for better query performance
+-- This maintains fast lookups while allowing multiple checks per date
+CREATE INDEX idx_check_date_status ON expiry_check_logs(check_date, status);
+
+-- Add index for queries by date and start time
+CREATE INDEX idx_check_date_start_time ON expiry_check_logs(check_date, start_time DESC);
+
+-- Note: After applying this change, the application can be configured to:
+-- 1. Allow multiple manual checks: expiry.check.allow-multiple-manual=true
+-- 2. Restrict to one check per day: expiry.check.allow-multiple-manual=false
+--    (restriction handled at application level, not database level)
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 
