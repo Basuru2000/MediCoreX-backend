@@ -253,6 +253,7 @@ ALTER TABLE expiry_alerts
     ADD CONSTRAINT fk_alert_check_log
         FOREIGN KEY (check_log_id) REFERENCES expiry_check_logs(id);
 
+
 -- =====================================================
 -- Date: 2024-02-XX (Update with today's date)
 -- Feature: Allow Multiple Manual Expiry Checks (Week 5 Enhancement)
@@ -282,6 +283,107 @@ CREATE INDEX idx_check_date_start_time ON expiry_check_logs(check_date, start_ti
 -- 1. Allow multiple manual checks: expiry.check.allow-multiple-manual=true
 -- 2. Restrict to one check per day: expiry.check.allow-multiple-manual=false
 --    (restriction handled at application level, not database level)
+
+
+-- =====================================================
+-- Date: 2024-02-XX (Update with actual date)
+-- Feature: Batch-wise Expiry Tracking (Week 5.3)
+-- Developer: Week 5 Implementation
+-- Status: PENDING -> Change to APPLIED ✓ after running
+-- =====================================================
+
+-- Product Batch table for tracking individual batches
+CREATE TABLE IF NOT EXISTS product_batches (
+                                               id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                               product_id BIGINT NOT NULL,
+                                               batch_number VARCHAR(50) NOT NULL,
+                                               quantity INT NOT NULL DEFAULT 0,
+                                               initial_quantity INT NOT NULL,
+                                               expiry_date DATE NOT NULL,
+                                               manufacture_date DATE,
+                                               supplier_reference VARCHAR(100),
+                                               cost_per_unit DECIMAL(10,2),
+                                               status ENUM('ACTIVE', 'DEPLETED', 'EXPIRED', 'QUARANTINED') NOT NULL DEFAULT 'ACTIVE',
+                                               notes TEXT,
+                                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                               FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+                                               UNIQUE KEY unique_product_batch (product_id, batch_number),
+                                               INDEX idx_expiry_date (expiry_date),
+                                               INDEX idx_status (status),
+                                               INDEX idx_product_status (product_id, status)
+);
+
+-- Batch Stock Transactions table
+CREATE TABLE IF NOT EXISTS batch_stock_transactions (
+                                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                        batch_id BIGINT NOT NULL,
+                                                        quantity INT NOT NULL,
+                                                        balance_after INT NOT NULL,
+                                                        transaction_type ENUM('IN', 'OUT', 'ADJUSTMENT', 'EXPIRED', 'QUARANTINE') NOT NULL,
+                                                        reference_type VARCHAR(50),
+                                                        reference_id BIGINT,
+                                                        reason VARCHAR(255),
+                                                        performed_by BIGINT NOT NULL,
+                                                        transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                        FOREIGN KEY (batch_id) REFERENCES product_batches(id),
+                                                        FOREIGN KEY (performed_by) REFERENCES users(id),
+                                                        INDEX idx_batch_date (batch_id, transaction_date)
+);
+
+-- Update expiry_alerts to track batch
+ALTER TABLE expiry_alerts
+    ADD COLUMN batch_id BIGINT AFTER product_id,
+    ADD CONSTRAINT fk_alert_batch
+        FOREIGN KEY (batch_id) REFERENCES product_batches(id);
+
+-- Create index for batch-based alerts
+CREATE INDEX idx_alert_batch ON expiry_alerts(batch_id, status);
+
+-- Migrate existing product data to batches (one batch per product with existing data)
+INSERT INTO product_batches (
+    product_id,
+    batch_number,
+    quantity,
+    initial_quantity,
+    expiry_date,
+    status
+)
+SELECT
+    id,
+    COALESCE(batch_number, CONCAT('BATCH-', id, '-', DATE_FORMAT(NOW(), '%Y%m%d'))),
+    quantity,
+    quantity,
+    expiry_date,
+    CASE
+        WHEN quantity = 0 THEN 'DEPLETED'
+        WHEN expiry_date < CURDATE() THEN 'EXPIRED'
+        ELSE 'ACTIVE'
+        END
+FROM products
+WHERE expiry_date IS NOT NULL;
+
+-- Add trigger to update product quantity based on batch totals
+DELIMITER $$
+CREATE TRIGGER update_product_quantity_after_batch_change
+    AFTER UPDATE ON product_batches
+    FOR EACH ROW
+BEGIN
+    UPDATE products
+    SET quantity = (
+        SELECT COALESCE(SUM(quantity), 0)
+        FROM product_batches
+        WHERE product_id = NEW.product_id
+          AND status IN ('ACTIVE', 'QUARANTINED')
+    )
+    WHERE id = NEW.product_id;
+END$$
+DELIMITER ;
+
+-- =====================================================
+-- END OF BATCH TRACKING SCHEMA CHANGES
+-- =====================================================
+
 
 -- =====================================================
 -- UPCOMING CHANGES
