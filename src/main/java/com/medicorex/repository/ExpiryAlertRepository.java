@@ -33,4 +33,6 @@ public interface ExpiryAlertRepository extends JpaRepository<ExpiryAlert, Long> 
             "AND ea.config.severity = :severity")
     Long countByStatusAndSeverity(@Param("status") ExpiryAlert.AlertStatus status,
                                   @Param("severity") ExpiryAlertConfig.AlertSeverity severity);
+
+    boolean existsByBatchIdAndConfigId(Long batchId, Long configId);
 }
