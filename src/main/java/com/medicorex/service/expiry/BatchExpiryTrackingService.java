@@ -20,7 +20,7 @@ public class BatchExpiryTrackingService {
     private final ProductBatchRepository batchRepository;
     private final ExpiryAlertRepository alertRepository;
     private final ExpiryAlertConfigRepository configRepository;
-    private final ProductBatchService batchService;
+    // REMOVED: private final ProductBatchService batchService;
 
     /**
      * Check batches for expiry and generate alerts
@@ -73,7 +73,18 @@ public class BatchExpiryTrackingService {
     @Transactional
     public void markExpiredBatches() {
         log.info("Running daily expired batch marking task");
-        batchService.markExpiredBatches();
+
+        // Implement the logic directly here instead of calling ProductBatchService
+        LocalDate today = LocalDate.now();
+        List<ProductBatch> expiredBatches = batchRepository.findExpiredActiveBatches(today);
+
+        for (ProductBatch batch : expiredBatches) {
+            batch.setStatus(ProductBatch.BatchStatus.EXPIRED);
+            batchRepository.save(batch);
+            log.info("Marked batch {} as expired", batch.getBatchNumber());
+        }
+
+        log.info("Marked {} batches as expired", expiredBatches.size());
     }
 
     /**
@@ -83,15 +94,12 @@ public class BatchExpiryTrackingService {
         ExpiryAlert alert = new ExpiryAlert();
         alert.setProduct(batch.getProduct());
         alert.setConfig(config);
+        alert.setBatch(batch); // Set the batch relationship
         alert.setBatchNumber(batch.getBatchNumber());
         alert.setAlertDate(alertDate);
         alert.setExpiryDate(batch.getExpiryDate());
         alert.setQuantityAffected(batch.getQuantity());
         alert.setStatus(ExpiryAlert.AlertStatus.PENDING);
-
-        // Set the batch reference (if we added batch_id to expiry_alerts table)
-        // For now, we'll include it in the notes
-        alert.setNotes("Batch ID: " + batch.getId() + ", Batch: " + batch.getBatchNumber());
 
         alertRepository.save(alert);
 

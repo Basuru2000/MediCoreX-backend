@@ -26,6 +26,11 @@ public class ExpiryAlert {
     @JoinColumn(name = "config_id", nullable = false)
     private ExpiryAlertConfig config;
 
+    // Add this new relationship
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "batch_id")
+    private ProductBatch batch;
+
     private String batchNumber;
 
     @Column(nullable = false)
