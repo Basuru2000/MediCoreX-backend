@@ -385,6 +385,81 @@ DELIMITER ;
 -- END OF BATCH TRACKING SCHEMA CHANGES
 -- =====================================================
 
+-- =====================================================
+-- Date: 2024-02-XX (Update with actual date)
+-- Feature: 1.4 Expired Items Quarantine Workflow (Week 5)
+-- Developer: Week 5 Implementation
+-- Status: PENDING
+-- =====================================================
+
+-- Quarantine Records table to track quarantined items
+CREATE TABLE IF NOT EXISTS quarantine_records (
+                                                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                  batch_id BIGINT NOT NULL,
+                                                  product_id BIGINT NOT NULL,
+                                                  quantity_quarantined INT NOT NULL,
+                                                  reason VARCHAR(50) NOT NULL,
+                                                  quarantine_date DATE NOT NULL,
+                                                  quarantined_by VARCHAR(50) NOT NULL,
+                                                  status ENUM('PENDING_REVIEW', 'UNDER_REVIEW', 'APPROVED_FOR_DISPOSAL',
+                                                      'APPROVED_FOR_RETURN', 'DISPOSED', 'RETURNED') NOT NULL DEFAULT 'PENDING_REVIEW',
+                                                  review_date DATETIME,
+                                                  reviewed_by VARCHAR(50),
+                                                  disposal_date DATETIME,
+                                                  disposal_method VARCHAR(100),
+                                                  disposal_certificate VARCHAR(255),
+                                                  return_date DATETIME,
+                                                  return_reference VARCHAR(100),
+                                                  estimated_loss DECIMAL(10,2),
+                                                  notes TEXT,
+                                                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                                  FOREIGN KEY (batch_id) REFERENCES product_batches(id),
+                                                  FOREIGN KEY (product_id) REFERENCES products(id),
+                                                  INDEX idx_quarantine_status (status),
+                                                  INDEX idx_quarantine_date (quarantine_date),
+                                                  INDEX idx_quarantine_batch (batch_id)
+);
+
+-- Quarantine Action Log for audit trail
+CREATE TABLE IF NOT EXISTS quarantine_action_logs (
+                                                      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                      quarantine_record_id BIGINT NOT NULL,
+                                                      action VARCHAR(50) NOT NULL,
+                                                      performed_by VARCHAR(50) NOT NULL,
+                                                      performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                      previous_status VARCHAR(50),
+                                                      new_status VARCHAR(50),
+                                                      comments TEXT,
+
+                                                      FOREIGN KEY (quarantine_record_id) REFERENCES quarantine_records(id),
+                                                      INDEX idx_action_record (quarantine_record_id)
+);
+
+-- Add quarantine reference to expiry alerts
+ALTER TABLE expiry_alerts
+    ADD COLUMN quarantine_record_id BIGINT AFTER batch_id,
+    ADD CONSTRAINT fk_alert_quarantine
+        FOREIGN KEY (quarantine_record_id) REFERENCES quarantine_records(id);
+
+-- Create view for quarantine summary
+CREATE OR REPLACE VIEW quarantine_summary_view AS
+SELECT
+    COUNT(*) as total_items,
+    SUM(quantity_quarantined) as total_quantity,
+    SUM(estimated_loss) as total_estimated_loss,
+    SUM(CASE WHEN status = 'PENDING_REVIEW' THEN 1 ELSE 0 END) as pending_review,
+    SUM(CASE WHEN status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as under_review,
+    SUM(CASE WHEN status IN ('APPROVED_FOR_DISPOSAL', 'DISPOSED') THEN 1 ELSE 0 END) as disposal_count,
+    SUM(CASE WHEN status IN ('APPROVED_FOR_RETURN', 'RETURNED') THEN 1 ELSE 0 END) as return_count,
+    DATE(quarantine_date) as date_grouped
+FROM quarantine_records
+GROUP BY DATE(quarantine_date);
+
+-- =====================================================
+-- END OF QUARANTINE WORKFLOW SCHEMA CHANGES
+-- =====================================================
 
 -- =====================================================
 -- UPCOMING CHANGES

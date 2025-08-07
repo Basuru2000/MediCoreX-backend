@@ -5,8 +5,10 @@ import com.medicorex.dto.ExpiryCheckResultDTO;
 import com.medicorex.entity.ExpiryCheckLog;
 import com.medicorex.entity.ExpiryCheckLog.CheckStatus;
 import com.medicorex.repository.ExpiryCheckLogRepository;
+import com.medicorex.service.quarantine.QuarantineService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -29,6 +31,9 @@ public class ExpiryMonitoringService {
     private final ExpiryAlertGenerator alertGenerator;
     private final BatchExpiryTrackingService batchExpiryTrackingService;
 
+    @Autowired(required = false)
+    private QuarantineService quarantineService;
+
     // Configuration to allow multiple manual checks per day (useful for testing)
     @Value("${expiry.check.allow-multiple-manual:true}")
     private boolean allowMultipleManualChecks;
@@ -50,6 +55,21 @@ public class ExpiryMonitoringService {
         }
 
         executeExpiryCheck(today, "SCHEDULED");
+    }
+
+    /**
+     * Auto-quarantine expired items (runs daily after expiry check)
+     */
+    @Scheduled(cron = "0 30 2 * * *") // Runs at 2:30 AM, after expiry check
+    public void autoQuarantineExpiredItems() {
+        log.info("Starting auto-quarantine process for expired items");
+
+        if (quarantineService != null) {
+            quarantineService.autoQuarantineExpiredBatches();
+            log.info("Auto-quarantine process completed");
+        } else {
+            log.warn("QuarantineService not available - skipping auto-quarantine");
+        }
     }
 
     /**
