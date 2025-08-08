@@ -5,6 +5,7 @@ import com.medicorex.entity.*;
 import com.medicorex.exception.InsufficientBatchStockException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
+import com.medicorex.service.quarantine.QuarantineService; // ✅ ADD THIS IMPORT
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ public class ProductBatchService {
     private final ProductBatchRepository batchRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
+    private final QuarantineService quarantineService; // ADD THIS if missing
 
     /**
      * Create a new batch for a product
@@ -177,8 +179,18 @@ public class ProductBatchService {
                 break;
 
             case "QUARANTINE":
-                batch.setStatus(ProductBatch.BatchStatus.QUARANTINED);
-                break;
+                // ✅ FIXED: Now calls quarantine service
+                String reason = dto.getReason() != null ? dto.getReason() : "Manual quarantine from stock adjustment";
+
+                // Create quarantine record (this also updates batch status)
+                quarantineService.quarantineBatch(
+                        batch.getId(),
+                        reason,
+                        "admin" // TODO: Get from security context
+                );
+
+                // Return the updated batch
+                return convertToDTO(batchRepository.findById(batch.getId()).orElseThrow());
 
             default:
                 throw new IllegalArgumentException("Invalid adjustment type: " + dto.getAdjustmentType());
