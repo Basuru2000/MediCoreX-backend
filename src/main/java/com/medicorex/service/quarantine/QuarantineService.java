@@ -4,6 +4,7 @@ import com.medicorex.dto.*;
 import com.medicorex.entity.*;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
+import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -15,7 +16,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -28,11 +32,12 @@ public class QuarantineService {
     private final ProductBatchRepository batchRepository;
     private final ProductRepository productRepository;
     private final QuarantineWorkflowService workflowService;
+    private final NotificationService notificationService;
 
     /**
      * Create quarantine record for expired batch
      */
-    public QuarantineItemDTO quarantineBatch(Long batchId, String reason, String username) {
+    public QuarantineItemDTO quarantineBatch(Long batchId, String reason, String performedBy) {
         log.info("Quarantining batch {} for reason: {}", batchId, reason);
 
         ProductBatch batch = batchRepository.findById(batchId)
@@ -50,7 +55,7 @@ public class QuarantineService {
         record.setQuantityQuarantined(batch.getQuantity());
         record.setReason(reason);
         record.setQuarantineDate(LocalDate.now());
-        record.setQuarantinedBy(username);
+        record.setQuarantinedBy(performedBy);
         record.setStatus(QuarantineRecord.QuarantineStatus.PENDING_REVIEW);
 
         // Calculate estimated loss
@@ -64,8 +69,23 @@ public class QuarantineService {
         batchRepository.save(batch);
 
         // Create audit log
-        workflowService.logAction(savedRecord.getId(), "QUARANTINE", username,
+        workflowService.logAction(savedRecord.getId(), "QUARANTINE", performedBy,
                 null, "PENDING_REVIEW", "Batch quarantined: " + reason);
+
+        // Create notification
+        Map<String, String> params = new HashMap<>();
+        params.put("productName", batch.getProduct().getName());
+        params.put("batchNumber", batch.getBatchNumber());
+        params.put("reason", reason);
+        Map<String, Object> actionData = new HashMap<>();
+        actionData.put("recordId", savedRecord.getId());
+        actionData.put("batchId", batchId);
+        notificationService.notifyUsersByRole(
+                Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                "QUARANTINE_NEW",
+                params,
+                actionData
+        );
 
         log.info("Created quarantine record {} for batch {}", savedRecord.getId(), batchId);
 

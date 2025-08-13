@@ -35,4 +35,19 @@ public interface ExpiryAlertRepository extends JpaRepository<ExpiryAlert, Long> 
                                   @Param("severity") ExpiryAlertConfig.AlertSeverity severity);
 
     boolean existsByBatchIdAndConfigId(Long batchId, Long configId);
+
+    // ADDED METHODS to fix compilation errors:
+
+    // Check if alert exists for a batch
+    boolean existsByBatchId(Long batchId);
+
+    // Find alerts by batch ID
+    List<ExpiryAlert> findByBatchId(Long batchId);
+
+    // Alternative: Check with status
+    boolean existsByBatchIdAndStatus(Long batchId, ExpiryAlert.AlertStatus status);
+
+    // Get pending alerts for a batch
+    @Query("SELECT a FROM ExpiryAlert a WHERE a.batch.id = :batchId AND a.status = 'PENDING'")
+    List<ExpiryAlert> findPendingAlertsByBatchId(@Param("batchId") Long batchId);
 }

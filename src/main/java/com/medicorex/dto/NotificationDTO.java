@@ -1,8 +1,6 @@
 package com.medicorex.dto;
 
 import com.medicorex.entity.Notification.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,25 +13,19 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class NotificationCreateDTO {
-
-    @NotNull(message = "User ID is required")
+public class NotificationDTO {
+    private Long id;
     private Long userId;
-
-    @NotBlank(message = "Type is required")
+    private String username;
     private String type;
-
-    @NotNull(message = "Category is required")
     private NotificationCategory category;
-
-    @NotBlank(message = "Title is required")
     private String title;
-
-    @NotBlank(message = "Message is required")
     private String message;
-
     private NotificationPriority priority;
+    private NotificationStatus status;
     private String actionUrl;
     private Map<String, Object> actionData;
+    private LocalDateTime createdAt;
+    private LocalDateTime readAt;
     private LocalDateTime expiresAt;
 }

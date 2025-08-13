@@ -462,6 +462,170 @@ GROUP BY DATE(quarantine_date);
 -- =====================================================
 
 -- =====================================================
+-- Date: 2024-02-XX (Update with actual date)
+-- Feature: 2.1 In-app Notification Center (Week 5)
+-- Developer: Week 5 Implementation Phase 2
+-- Status: PENDING
+-- =====================================================
+
+-- Notifications table to store all system notifications
+CREATE TABLE IF NOT EXISTS notifications (
+                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                             user_id BIGINT NOT NULL,
+                                             type VARCHAR(50) NOT NULL,
+                                             category VARCHAR(50) NOT NULL,
+                                             title VARCHAR(255) NOT NULL,
+                                             message TEXT NOT NULL,
+                                             priority ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') DEFAULT 'MEDIUM',
+                                             status ENUM('UNREAD', 'READ', 'ARCHIVED') DEFAULT 'UNREAD',
+                                             action_url VARCHAR(500),
+                                             action_data JSON,
+                                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                             read_at TIMESTAMP NULL,
+                                             expires_at TIMESTAMP NULL,
+
+                                             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                                             INDEX idx_user_status (user_id, status),
+                                             INDEX idx_created_at (created_at),
+                                             INDEX idx_type_category (type, category)
+);
+
+-- Notification preferences table for user settings (preparation for 2.2)
+CREATE TABLE IF NOT EXISTS notification_preferences (
+                                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                        user_id BIGINT NOT NULL UNIQUE,
+                                                        email_enabled BOOLEAN DEFAULT TRUE,
+                                                        sms_enabled BOOLEAN DEFAULT FALSE,
+                                                        in_app_enabled BOOLEAN DEFAULT TRUE,
+                                                        quarantine_notifications BOOLEAN DEFAULT TRUE,
+                                                        stock_notifications BOOLEAN DEFAULT TRUE,
+                                                        expiry_notifications BOOLEAN DEFAULT TRUE,
+                                                        batch_notifications BOOLEAN DEFAULT TRUE,
+                                                        system_notifications BOOLEAN DEFAULT TRUE,
+                                                        approval_notifications BOOLEAN DEFAULT TRUE,
+                                                        report_notifications BOOLEAN DEFAULT TRUE,
+                                                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Notification templates for consistent messaging
+CREATE TABLE IF NOT EXISTS notification_templates (
+                                                      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                      code VARCHAR(100) NOT NULL UNIQUE,
+                                                      category VARCHAR(50) NOT NULL,
+                                                      title_template VARCHAR(500) NOT NULL,
+                                                      message_template TEXT NOT NULL,
+                                                      priority ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') DEFAULT 'MEDIUM',
+                                                      active BOOLEAN DEFAULT TRUE,
+                                                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Insert default notification templates
+INSERT INTO notification_templates (code, category, title_template, message_template, priority) VALUES
+-- Quarantine Templates
+('QUARANTINE_NEW', 'QUARANTINE', 'New Quarantine Record', 'Product {{productName}} (Batch: {{batchNumber}}) has been quarantined. Reason: {{reason}}', 'HIGH'),
+('QUARANTINE_APPROVED_DISPOSAL', 'QUARANTINE', 'Quarantine Item Approved for Disposal', 'Product {{productName}} has been approved for disposal. Please proceed with disposal process.', 'HIGH'),
+('QUARANTINE_APPROVED_RETURN', 'QUARANTINE', 'Quarantine Item Approved for Return', 'Product {{productName}} has been approved for return to supplier.', 'MEDIUM'),
+('QUARANTINE_DISPOSED', 'QUARANTINE', 'Item Disposed', 'Product {{productName}} (Batch: {{batchNumber}}) has been disposed. Method: {{method}}', 'MEDIUM'),
+('QUARANTINE_RETURNED', 'QUARANTINE', 'Item Returned to Supplier', 'Product {{productName}} (Batch: {{batchNumber}}) has been successfully returned.', 'MEDIUM'),
+('QUARANTINE_ESCALATION', 'QUARANTINE', 'Quarantine Escalation Alert', '{{count}} quarantine items require immediate attention.', 'CRITICAL'),
+
+-- Stock Templates
+('STOCK_LOW', 'STOCK', 'Low Stock Alert', 'Product {{productName}} is running low. Current quantity: {{quantity}}, Minimum: {{minStock}}', 'HIGH'),
+('STOCK_OUT', 'STOCK', 'Out of Stock', 'Product {{productName}} is now out of stock!', 'CRITICAL'),
+('STOCK_ADJUSTED', 'STOCK', 'Stock Adjustment', 'Stock for {{productName}} has been adjusted. New quantity: {{quantity}}', 'LOW'),
+('STOCK_RECEIVED', 'STOCK', 'Stock Received', 'New stock received for {{productName}}. Quantity: {{quantity}}', 'LOW'),
+
+-- Expiry Templates
+('EXPIRY_7_DAYS', 'EXPIRY', 'Product Expiring Soon', 'Product {{productName}} (Batch: {{batchNumber}}) will expire in 7 days!', 'HIGH'),
+('EXPIRY_30_DAYS', 'EXPIRY', 'Product Expiry Alert', 'Product {{productName}} (Batch: {{batchNumber}}) will expire in 30 days.', 'MEDIUM'),
+('EXPIRY_60_DAYS', 'EXPIRY', 'Product Expiry Notice', 'Product {{productName}} (Batch: {{batchNumber}}) will expire in 60 days.', 'LOW'),
+('EXPIRY_90_DAYS', 'EXPIRY', 'Product Expiry Reminder', 'Product {{productName}} (Batch: {{batchNumber}}) will expire in 90 days.', 'LOW'),
+('EXPIRED', 'EXPIRY', 'Product Expired', 'Product {{productName}} (Batch: {{batchNumber}}) has expired and moved to quarantine.', 'CRITICAL'),
+
+-- Batch Templates
+('BATCH_CREATED', 'BATCH', 'New Batch Created', 'New batch {{batchNumber}} created for {{productName}}', 'LOW'),
+('BATCH_DEPLETED', 'BATCH', 'Batch Depleted', 'Batch {{batchNumber}} of {{productName}} is now depleted.', 'MEDIUM'),
+('BATCH_EXPIRING', 'BATCH', 'Batch Expiring Soon', 'Batch {{batchNumber}} of {{productName}} will expire on {{expiryDate}}', 'HIGH'),
+
+-- User Templates
+('USER_CREATED', 'USER', 'New User Account', 'A new user account has been created for {{username}}', 'LOW'),
+('USER_ROLE_CHANGED', 'USER', 'Role Updated', 'Your role has been updated to {{role}}', 'MEDIUM'),
+('USER_STATUS_CHANGED', 'USER', 'Account Status Changed', 'Your account status has been {{status}}', 'HIGH'),
+('USER_PASSWORD_RESET', 'USER', 'Password Reset', 'Your password has been reset successfully.', 'HIGH'),
+
+-- System Templates
+('SYSTEM_MAINTENANCE', 'SYSTEM', 'System Maintenance', 'System maintenance scheduled for {{date}} from {{startTime}} to {{endTime}}', 'HIGH'),
+('SYSTEM_UPDATE', 'SYSTEM', 'System Update', 'System has been updated to version {{version}}', 'MEDIUM'),
+('SYSTEM_ANNOUNCEMENT', 'SYSTEM', 'System Announcement', '{{message}}', 'MEDIUM'),
+
+-- Approval Templates
+('APPROVAL_PENDING', 'APPROVAL', 'Approval Required', '{{itemType}} requires your approval: {{itemName}}', 'HIGH'),
+('APPROVAL_GRANTED', 'APPROVAL', 'Approval Granted', 'Your request for {{itemName}} has been approved.', 'MEDIUM'),
+('APPROVAL_REJECTED', 'APPROVAL', 'Approval Rejected', 'Your request for {{itemName}} has been rejected. Reason: {{reason}}', 'MEDIUM'),
+
+-- Report Templates
+('REPORT_READY', 'REPORT', 'Report Generated', 'Your {{reportType}} report is ready for download.', 'LOW'),
+('REPORT_SCHEDULED', 'REPORT', 'Scheduled Report', 'Your scheduled {{reportType}} report has been generated.', 'LOW');
+
+-- Create view for notification summary
+CREATE OR REPLACE VIEW notification_summary_view AS
+SELECT
+    u.id as user_id,
+    u.username,
+    COUNT(CASE WHEN n.status = 'UNREAD' THEN 1 END) as unread_count,
+    COUNT(CASE WHEN n.status = 'READ' THEN 1 END) as read_count,
+    COUNT(CASE WHEN n.priority = 'CRITICAL' AND n.status = 'UNREAD' THEN 1 END) as critical_unread,
+    COUNT(CASE WHEN n.priority = 'HIGH' AND n.status = 'UNREAD' THEN 1 END) as high_priority_unread,
+    MAX(n.created_at) as latest_notification
+FROM users u
+         LEFT JOIN notifications n ON u.id = n.user_id
+GROUP BY u.id, u.username;
+
+-- Add notification count to user sessions (for caching)
+ALTER TABLE users
+    ADD COLUMN unread_notifications INT DEFAULT 0,
+    ADD COLUMN last_notification_check TIMESTAMP NULL;
+
+-- Create trigger to update unread count
+DELIMITER $$
+CREATE TRIGGER update_unread_notification_count
+    AFTER INSERT ON notifications
+    FOR EACH ROW
+BEGIN
+    UPDATE users
+    SET unread_notifications = (
+        SELECT COUNT(*)
+        FROM notifications
+        WHERE user_id = NEW.user_id AND status = 'UNREAD'
+    )
+    WHERE id = NEW.user_id;
+END$$
+
+CREATE TRIGGER update_unread_count_on_read
+    AFTER UPDATE ON notifications
+    FOR EACH ROW
+BEGIN
+    IF OLD.status != NEW.status THEN
+        UPDATE users
+        SET unread_notifications = (
+            SELECT COUNT(*)
+            FROM notifications
+            WHERE user_id = NEW.user_id AND status = 'UNREAD'
+        )
+        WHERE id = NEW.user_id;
+    END IF;
+END$$
+DELIMITER ;
+
+-- =====================================================
+-- END OF NOTIFICATION SYSTEM SCHEMA CHANGES
+-- =====================================================
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 

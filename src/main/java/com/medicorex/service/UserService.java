@@ -12,7 +12,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,6 +23,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final FileService fileService;
+    private final NotificationService notificationService; // ✅ ADD THIS
 
     public List<UserDTO> getAllUsers() {
         return userRepository.findAll().stream()
@@ -33,6 +34,23 @@ public class UserService {
     public UserDTO getUserById(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
+        return convertToDTO(user);
+    }
+
+    /**
+     * Find user by username
+     */
+    public User findByUsername(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", username));
+    }
+
+    /**
+     * Find user by username and return as DTO
+     */
+    public UserDTO findUserByUsername(String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", username));
         return convertToDTO(user);
     }
 
@@ -56,6 +74,18 @@ public class UserService {
         user.setActive(true);
 
         User savedUser = userRepository.save(user);
+
+        // ✅ ADD notification when user is created
+        Map<String, String> params = new HashMap<>();
+        params.put("username", savedUser.getUsername());
+        params.put("role", savedUser.getRole().toString());
+
+        // Notify managers about new user
+        notificationService.notifyUsersByRole(
+                Arrays.asList("HOSPITAL_MANAGER"),
+                "USER_CREATED", params, null
+        );
+
         return convertToDTO(savedUser);
     }
 
@@ -67,6 +97,17 @@ public class UserService {
         if (!user.getEmail().equals(userUpdateDTO.getEmail()) &&
                 userRepository.existsByEmail(userUpdateDTO.getEmail())) {
             throw new BusinessException("Email is already in use!");
+        }
+
+        // ✅ ADD notification if role changed
+        if (!user.getRole().equals(userUpdateDTO.getRole())) {
+            // Notify user about role change
+            Map<String, String> params = new HashMap<>();
+            params.put("role", userUpdateDTO.getRole().toString());
+
+            notificationService.createNotificationFromTemplate(
+                    id, "USER_ROLE_CHANGED", params, null
+            );
         }
 
         // If profile image is being changed, delete the old one

@@ -6,6 +6,7 @@ import com.medicorex.entity.ExpiryCheckLog;
 import com.medicorex.entity.ExpiryCheckLog.CheckStatus;
 import com.medicorex.repository.ExpiryCheckLogRepository;
 import com.medicorex.service.quarantine.QuarantineService;
+import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,7 @@ public class ExpiryMonitoringService {
     private final ExpiryCheckLogRepository checkLogRepository;
     private final ExpiryAlertGenerator alertGenerator;
     private final BatchExpiryTrackingService batchExpiryTrackingService;
+    private final NotificationService notificationService;
 
     @Autowired(required = false)
     private QuarantineService quarantineService;
@@ -130,7 +132,7 @@ public class ExpiryMonitoringService {
             // Generate alerts
             AlertGenerationReportDTO report = alertGenerator.generateAlertsForDate(checkDate, checkLog.getId());
 
-            // Check batch expiry
+            // Check batch expiry (THIS IS WHERE NOTIFICATIONS ARE CREATED)
             batchExpiryTrackingService.checkBatchExpiry(checkDate);
 
             // Update check log with results
@@ -148,6 +150,27 @@ public class ExpiryMonitoringService {
                     report.getTotalProductsProcessed(),
                     report.getTotalAlertsGenerated(),
                     checkLog.getExecutionTimeMs());
+
+            // OPTIONAL: Create summary notification for managers
+            if (report.getTotalAlertsGenerated() > 0) {
+                Map<String, String> params = new HashMap<>();
+                params.put("count", String.valueOf(report.getTotalAlertsGenerated()));
+                params.put("date", checkDate.toString());
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("checkLogId", checkLog.getId());
+                actionData.put("type", "expiry_check_summary");
+
+                notificationService.notifyUsersByRole(
+                        List.of("HOSPITAL_MANAGER"),
+                        "SYSTEM_ANNOUNCEMENT",
+                        params,
+                        actionData
+                );
+
+                log.info("Summary notification sent for {} alerts generated",
+                        report.getTotalAlertsGenerated());
+            }
 
             return buildCheckResultDTO(checkLog, report);
 

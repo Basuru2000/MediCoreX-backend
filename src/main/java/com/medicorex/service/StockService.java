@@ -10,6 +10,7 @@ import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.ProductRepository;
 import com.medicorex.repository.StockTransactionRepository;
 import com.medicorex.repository.UserRepository;
+import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +29,7 @@ public class StockService {
     private final ProductRepository productRepository;
     private final StockTransactionRepository stockTransactionRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     public void adjustStock(StockAdjustmentDTO adjustmentDTO) {
         Product product = productRepository.findById(adjustmentDTO.getProductId())
@@ -46,6 +48,16 @@ public class StockService {
         // Update product quantity
         product.setQuantity(newQuantity);
         productRepository.save(product);
+
+        // Check for low stock and create notification
+        if (product.getQuantity() <= product.getMinStockLevel()) {
+            notificationService.createStockAlertNotification(
+                    product.getId(),
+                    product.getName(),
+                    product.getQuantity(),
+                    product.getMinStockLevel()
+            );
+        }
 
         // Create stock transaction record
         StockTransaction transaction = new StockTransaction();
