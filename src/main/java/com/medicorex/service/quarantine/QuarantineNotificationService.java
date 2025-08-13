@@ -1,10 +1,13 @@
 package com.medicorex.service.quarantine;
 
 import com.medicorex.dto.NotificationCreateDTO;
+import com.medicorex.entity.Notification;
+import com.medicorex.entity.Notification.NotificationCategory;
+import com.medicorex.entity.Notification.NotificationPriority;
 import com.medicorex.entity.QuarantineRecord;
 import com.medicorex.entity.User;
 import com.medicorex.repository.UserRepository;
-import com.medicorex.service.notification.NotificationService;
+import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -110,6 +113,7 @@ public class QuarantineNotificationService {
 
     /**
      * Send escalation notification for overdue items
+     * FIXED VERSION
      */
     public void notifyEscalation(List<QuarantineRecord> overdueRecords) {
         if (overdueRecords.isEmpty()) return;
@@ -171,48 +175,63 @@ public class QuarantineNotificationService {
 
     /**
      * Helper method to send notifications to users with specific roles
+     * FIXED VERSION
      */
     private void sendNotificationToRoles(String title, String message,
                                          Map<String, Object> data, List<String> roles) {
         try {
-            List<User> recipients = userRepository.findByRoleIn(roles);
+            List<User> users = userRepository.findByRoleIn(roles);
 
-            for (User user : recipients) {
-                NotificationCreateDTO notification = NotificationCreateDTO.builder()
+            for (User user : users) {
+                NotificationCreateDTO dto = NotificationCreateDTO.builder()
                         .userId(user.getId())
+                        .type("QUARANTINE_NOTIFICATION")
+                        .category(NotificationCategory.QUARANTINE)
                         .title(title)
                         .message(message)
-                        .type("QUARANTINE")
-                        .priority(determinePriority(data))
-                        .data(data)
+                        .priority(determinePriority(data))  // FIX: Use enum value from method
+                        .actionData(data)
                         .build();
 
-                notificationService.createNotification(notification);
+                // FIX: Use createCustomNotification instead of createNotification
+                notificationService.createCustomNotification(dto);
             }
 
             log.info("Sent quarantine notification to {} users with roles: {}",
-                    recipients.size(), roles);
+                    users.size(), roles);
         } catch (Exception e) {
             log.error("Failed to send quarantine notification: {}", e.getMessage(), e);
         }
     }
 
     /**
-     * Determine notification priority based on action
+     * Alternative method using template-based notifications
      */
-    private String determinePriority(Map<String, Object> data) {
+    private void sendTemplateNotificationToRoles(String templateCode,
+                                                 Map<String, String> params,
+                                                 Map<String, Object> actionData,
+                                                 List<String> roles) {
+        // For template-based notifications, use this approach
+        notificationService.notifyUsersByRole(roles, templateCode, params, actionData);
+    }
+
+    /**
+     * Determine notification priority based on action
+     * FIXED VERSION - returns enum instead of string
+     */
+    private NotificationPriority determinePriority(Map<String, Object> data) {
         String action = (String) data.get("action");
-        if (action == null) return "MEDIUM";
+        if (action == null) return NotificationPriority.MEDIUM;
 
         switch (action) {
             case "ESCALATION":
             case "QUARANTINE_CREATED":
-                return "HIGH";
+                return NotificationPriority.HIGH;
             case "PENDING_REVIEW":
             case "APPROVED_FOR_DISPOSAL":
-                return "MEDIUM";
+                return NotificationPriority.MEDIUM;
             default:
-                return "LOW";
+                return NotificationPriority.LOW;
         }
     }
 }

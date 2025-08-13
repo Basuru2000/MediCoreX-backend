@@ -6,6 +6,7 @@ import com.medicorex.exception.InsufficientBatchStockException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
 import com.medicorex.service.quarantine.QuarantineService; // ✅ ADD THIS IMPORT
+import com.medicorex.service.NotificationService; // ✅ ADD THIS IMPORT
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class ProductBatchService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final QuarantineService quarantineService; // ADD THIS if missing
+    private final NotificationService notificationService; // ✅ ADD THIS
 
     /**
      * Create a new batch for a product
@@ -122,6 +124,20 @@ public class ProductBatchService {
             // Update batch status if depleted
             if (batch.getQuantity() == 0) {
                 batch.setStatus(ProductBatch.BatchStatus.DEPLETED);
+
+                // ✅ ADD notification when batch is depleted
+                Map<String, String> params = new HashMap<>();
+                params.put("batchNumber", batch.getBatchNumber());
+                params.put("productName", batch.getProduct().getName());
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("batchId", batch.getId());
+                actionData.put("productId", productId);
+
+                notificationService.notifyUsersByRole(
+                        Arrays.asList("PHARMACY_STAFF"),
+                        "BATCH_DEPLETED", params, actionData
+                );
             }
 
             batchRepository.save(batch);

@@ -21,10 +21,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // Fixed methods for notification support
     List<User> findByRole(String role);
 
-    // ✅ FIXED: Simply get users by role without 'enabled' check
+    // Fixed: Get users by multiple roles
     List<User> findByRoleIn(List<String> roles);
 
-    // ✅ REMOVE or COMMENT OUT this problematic method
-    // @Query("SELECT u FROM User u WHERE u.enabled = true AND u.role IN :roles")
-    // List<User> findActiveUsersByRoleIn(@Param("roles") List<String> roles);
+    // Additional useful methods for notifications
+
+    // Find users by role who have notifications enabled (for future use with preferences)
+    @Query("SELECT u FROM User u WHERE u.role IN :roles")
+    List<User> findUsersByRoles(@Param("roles") List<String> roles);
+
+    // Get user with notification count
+    @Query("SELECT u FROM User u WHERE u.id = :userId")
+    Optional<User> findByIdWithNotifications(@Param("userId") Long userId);
+
+    // Update unread notification count
+    @Query("UPDATE User u SET u.unreadNotifications = :count WHERE u.id = :userId")
+    void updateUnreadNotificationCount(@Param("userId") Long userId, @Param("count") Integer count);
 }

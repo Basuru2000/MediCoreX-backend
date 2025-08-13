@@ -47,9 +47,35 @@ public class User {
 
     private LocalDateTime updatedAt;
 
+    // NEW FIELDS FOR NOTIFICATION SUPPORT:
+
+    @Column(name = "unread_notifications")
+    private Integer unreadNotifications = 0;
+
+    @Column(name = "last_notification_check")
+    private LocalDateTime lastNotificationCheck;
+
     @PreUpdate
     public void preUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    // GETTER/SETTER METHODS FOR NOTIFICATION FIELDS:
+
+    public Integer getUnreadNotifications() {
+        return unreadNotifications != null ? unreadNotifications : 0;
+    }
+
+    public void setUnreadNotifications(Integer unreadNotifications) {
+        this.unreadNotifications = unreadNotifications;
+    }
+
+    public LocalDateTime getLastNotificationCheck() {
+        return lastNotificationCheck;
+    }
+
+    public void setLastNotificationCheck(LocalDateTime lastNotificationCheck) {
+        this.lastNotificationCheck = lastNotificationCheck;
     }
 
     public enum UserRole {

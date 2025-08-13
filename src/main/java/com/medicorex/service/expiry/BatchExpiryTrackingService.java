@@ -2,6 +2,7 @@ package com.medicorex.service.expiry;
 
 import com.medicorex.entity.*;
 import com.medicorex.repository.*;
+import com.medicorex.service.NotificationService; // ADD THIS IMPORT
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -10,7 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -20,7 +23,7 @@ public class BatchExpiryTrackingService {
     private final ProductBatchRepository batchRepository;
     private final ExpiryAlertRepository alertRepository;
     private final ExpiryAlertConfigRepository configRepository;
-    // REMOVED: private final ProductBatchService batchService;
+    private final NotificationService notificationService; // ADD THIS FIELD
 
     /**
      * Check batches for expiry and generate alerts
@@ -56,8 +59,30 @@ public class BatchExpiryTrackingService {
                     if (!alertExists) {
                         createBatchAlert(batch, config, checkDate);
                         alertsGenerated++;
+
+                        // ============================================
+                        // ADD NOTIFICATION HERE
+                        // ============================================
+                        notificationService.createExpiryAlertNotification(
+                                batch.getId(),
+                                batch.getProduct().getName(),
+                                batch.getBatchNumber(),
+                                (int) daysUntilExpiry
+                        );
+                        log.debug("Created notification for expiring batch: {} ({} days until expiry)",
+                                batch.getBatchNumber(), daysUntilExpiry);
+
                         break; // Only create one alert per batch
                     }
+                } else if (daysUntilExpiry <= 0 && !alertExists(batch, "EXPIRED")) {
+                    // Batch has expired - create critical notification
+                    notificationService.createExpiryAlertNotification(
+                            batch.getId(),
+                            batch.getProduct().getName(),
+                            batch.getBatchNumber(),
+                            0  // 0 or negative means expired
+                    );
+                    log.warn("Batch {} has expired - critical notification sent", batch.getBatchNumber());
                 }
             }
         }
@@ -74,7 +99,6 @@ public class BatchExpiryTrackingService {
     public void markExpiredBatches() {
         log.info("Running daily expired batch marking task");
 
-        // Implement the logic directly here instead of calling ProductBatchService
         LocalDate today = LocalDate.now();
         List<ProductBatch> expiredBatches = batchRepository.findExpiredActiveBatches(today);
 
@@ -82,6 +106,26 @@ public class BatchExpiryTrackingService {
             batch.setStatus(ProductBatch.BatchStatus.EXPIRED);
             batchRepository.save(batch);
             log.info("Marked batch {} as expired", batch.getBatchNumber());
+
+            // ============================================
+            // ADD EXPIRED NOTIFICATION
+            // ============================================
+            // Create notification for expired batch
+            Map<String, String> params = new HashMap<>();
+            params.put("productName", batch.getProduct().getName());
+            params.put("batchNumber", batch.getBatchNumber());
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("batchId", batch.getId());
+            actionData.put("productId", batch.getProduct().getId());
+            actionData.put("type", "batch_expired");
+
+            notificationService.notifyUsersByRole(
+                    List.of("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                    "EXPIRED",
+                    params,
+                    actionData
+            );
         }
 
         log.info("Marked {} batches as expired", expiredBatches.size());
@@ -94,7 +138,7 @@ public class BatchExpiryTrackingService {
         ExpiryAlert alert = new ExpiryAlert();
         alert.setProduct(batch.getProduct());
         alert.setConfig(config);
-        alert.setBatch(batch); // Set the batch relationship
+        alert.setBatch(batch);
         alert.setBatchNumber(batch.getBatchNumber());
         alert.setAlertDate(alertDate);
         alert.setExpiryDate(batch.getExpiryDate());
@@ -105,5 +149,24 @@ public class BatchExpiryTrackingService {
 
         log.debug("Created expiry alert for batch {} of product {}",
                 batch.getBatchNumber(), batch.getProduct().getName());
+    }
+
+    /**
+     * Helper method to check if alert exists
+     * FIX: Updated to use correct repository method
+     */
+    private boolean alertExists(ProductBatch batch, String type) {
+        // Alternative 1: Check using batch and status
+        List<ExpiryAlert> alerts = alertRepository.findByBatchId(batch.getId());
+        return !alerts.isEmpty();
+    }
+
+    // Alternative: Add this method to check for existing alerts more precisely
+    private boolean hasExistingAlert(ProductBatch batch) {
+        // This checks if there's already an unresolved alert for this batch
+        List<ExpiryAlert> existingAlerts = alertRepository.findByBatchId(batch.getId());
+        return existingAlerts.stream()
+                .anyMatch(alert -> alert.getStatus() == ExpiryAlert.AlertStatus.PENDING
+                        || alert.getStatus() == ExpiryAlert.AlertStatus.ACKNOWLEDGED);
     }
 }
