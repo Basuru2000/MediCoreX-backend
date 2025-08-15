@@ -61,6 +61,19 @@ public class Product {
 
     private LocalDateTime updatedAt;
 
+    // New fields added
+    @Column(name = "min_stock")
+    private Integer minStock = 10; // Default minimum stock level
+
+    @Column(name = "max_stock")
+    private Integer maxStock = 1000; // Default maximum stock level
+
+    @Column(name = "last_updated")
+    private LocalDateTime lastUpdated;
+
+    @Column(name = "last_stock_check")
+    private LocalDateTime lastStockCheck;
+
     @PreUpdate
     public void preUpdate() {
         updatedAt = LocalDateTime.now();

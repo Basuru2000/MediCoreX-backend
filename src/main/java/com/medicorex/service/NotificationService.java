@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -134,23 +135,33 @@ public class NotificationService {
             NotificationCategory category,
             NotificationPriority priority,
             Pageable pageable) {
-
         // Use single dynamic query
-        Page<Notification> page = notificationRepository.findByUserIdWithFilters(
+        Page<Notification> notificationPage = notificationRepository.findByUserIdWithFilters(
                 userId, status, category, priority, pageable);
-
-        List<NotificationDTO> content = page.getContent().stream()
+        // Convert entities to DTOs
+        List<NotificationDTO> dtos = notificationPage.getContent().stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
+        // Create PageResponseDTO without builder
+        PageResponseDTO<NotificationDTO> response = new PageResponseDTO<>();
+        response.setContent(dtos);
+        response.setPage(notificationPage.getNumber());
+        response.setTotalPages(notificationPage.getTotalPages());
+        response.setTotalElements(notificationPage.getTotalElements());
+        response.setLast(notificationPage.isLast());
 
-        return PageResponseDTO.<NotificationDTO>builder()
-                .content(content)
-                .pageNumber(page.getNumber())
-                .pageSize(page.getSize())
-                .totalElements(page.getTotalElements())
-                .totalPages(page.getTotalPages())
-                .last(page.isLast())
-                .build();
+        return response;
+
+        // OR if PageResponseDTO has all-args constructor:
+        /*
+        return new PageResponseDTO<>(
+            dtos,
+            notificationPage.getNumber(),
+            notificationPage.getTotalPages(),
+            notificationPage.getTotalElements(),
+            notificationPage.isLast()
+        );
+        */
     }
 
     /**
@@ -334,6 +345,172 @@ public class NotificationService {
                 Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
                 templateCode, params, actionData
         );
+    }
+
+    /**
+     * Clean up archived notifications older than specified days
+     */
+    @Transactional
+    public int cleanupArchivedNotifications(int days) {
+        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(days);
+        return notificationRepository.deleteByStatusAndCreatedAtBefore(
+                NotificationStatus.ARCHIVED, cutoffDate);
+    }
+
+    /**
+     * Clean up expired notifications
+     */
+    @Transactional
+    public int cleanupExpiredNotifications() {
+        return notificationRepository.deleteByExpiresAtBefore(LocalDateTime.now());
+    }
+
+    /**
+     * Clean up old read notifications
+     */
+    @Transactional
+    public int cleanupOldReadNotifications(int days) {
+        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(days);
+        return notificationRepository.deleteByStatusAndReadAtBefore(
+                NotificationStatus.READ, cutoffDate);
+    }
+
+    /**
+     * Send daily summary to managers
+     */
+    @Transactional
+    public int sendDailySummaryToManagers() {
+        List<User> managers = userRepository.findByRole("HOSPITAL_MANAGER");
+        int summariesSent = 0;
+
+        for (User manager : managers) {
+            try {
+                // Get critical unread count
+                Long criticalCount = notificationRepository.countByUserIdAndStatusAndPriority(
+                        manager.getId(), NotificationStatus.UNREAD, NotificationPriority.CRITICAL);
+
+                Long highCount = notificationRepository.countByUserIdAndStatusAndPriority(
+                        manager.getId(), NotificationStatus.UNREAD, NotificationPriority.HIGH);
+
+                if (criticalCount > 0 || highCount > 0) {
+                    Map<String, String> params = new HashMap<>();
+                    params.put("criticalCount", String.valueOf(criticalCount));
+                    params.put("highCount", String.valueOf(highCount));
+                    params.put("date", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE));
+
+                    createNotificationFromTemplate(
+                            manager.getId(),
+                            "DAILY_SUMMARY",
+                            params,
+                            Map.of("action", "VIEW_ALL")
+                    );
+                    summariesSent++;
+                }
+            } catch (Exception e) {
+                log.error("Failed to send summary to manager {}: {}", manager.getId(), e.getMessage());
+            }
+        }
+
+        return summariesSent;
+    }
+
+    /**
+     * Escalate critical notifications
+     */
+    @Transactional
+    public int escalateCriticalNotifications(int hoursThreshold) {
+        LocalDateTime thresholdTime = LocalDateTime.now().minusHours(hoursThreshold);
+
+        List<Notification> criticalUnread = notificationRepository
+                .findByStatusAndPriorityAndCreatedAtBefore(
+                        NotificationStatus.UNREAD,
+                        NotificationPriority.CRITICAL,
+                        thresholdTime
+                );
+
+        int escalated = 0;
+        for (Notification notification : criticalUnread) {
+            try {
+                // Create escalation notification for all managers
+                List<User> managers = userRepository.findByRole("HOSPITAL_MANAGER");
+                for (User manager : managers) {
+                    if (!manager.getId().equals(notification.getUser().getId())) {
+                        Map<String, String> params = new HashMap<>();
+                        params.put("originalTitle", notification.getTitle());
+                        params.put("username", notification.getUser().getUsername());
+                        params.put("hours", String.valueOf(hoursThreshold));
+
+                        createNotificationFromTemplate(
+                                manager.getId(),
+                                "CRITICAL_ESCALATION",
+                                params,
+                                Map.of("originalId", notification.getId())
+                        );
+                        escalated++;
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Failed to escalate notification {}: {}", notification.getId(), e.getMessage());
+            }
+        }
+
+        return escalated;
+    }
+
+    /**
+     * Group similar notifications
+     */
+    @Transactional
+    public int groupSimilarNotifications() {
+        List<User> users = userRepository.findAll();
+        int totalGrouped = 0;
+
+        for (User user : users) {
+            // Find unread notifications for this user
+            List<Notification> unreadNotifications = notificationRepository
+                    .findByUserIdAndStatus(user.getId(), NotificationStatus.UNREAD);
+
+            // Group by type and category
+            Map<String, List<Notification>> grouped = unreadNotifications.stream()
+                    .filter(n -> n.getCreatedAt().isAfter(LocalDateTime.now().minusHours(24)))
+                    .collect(Collectors.groupingBy(n -> n.getType() + "_" + n.getCategory()));
+
+            for (Map.Entry<String, List<Notification>> entry : grouped.entrySet()) {
+                if (entry.getValue().size() >= 3) { // Group if 3 or more similar
+                    try {
+                        // Create grouped notification
+                        Notification groupedNotification = Notification.builder()
+                                .user(user)
+                                .type("GROUPED_" + entry.getValue().get(0).getType())
+                                .category(entry.getValue().get(0).getCategory())
+                                .title(entry.getValue().size() + " similar notifications")
+                                .message("You have " + entry.getValue().size() + " similar " +
+                                        entry.getValue().get(0).getCategory() + " notifications")
+                                .priority(entry.getValue().get(0).getPriority())
+                                .status(NotificationStatus.UNREAD)
+                                .actionData(Map.of("groupedIds",
+                                        entry.getValue().stream()
+                                                .map(Notification::getId)
+                                                .collect(Collectors.toList())))
+                                .build();
+
+                        notificationRepository.save(groupedNotification);
+
+                        // Archive original notifications
+                        entry.getValue().forEach(n -> {
+                            n.setStatus(NotificationStatus.ARCHIVED);
+                            notificationRepository.save(n);
+                        });
+
+                        totalGrouped += entry.getValue().size();
+                    } catch (Exception e) {
+                        log.error("Failed to group notifications: {}", e.getMessage());
+                    }
+                }
+            }
+        }
+
+        return totalGrouped;
     }
 
     // Helper methods

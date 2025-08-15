@@ -1,28 +1,27 @@
 package com.medicorex.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
-@Builder
-@AllArgsConstructor
 @NoArgsConstructor
+@AllArgsConstructor
 public class StockAdjustmentDTO {
+
     @NotNull(message = "Product ID is required")
     private Long productId;
 
     @NotNull(message = "Quantity is required")
-    private Integer quantity; // Positive for addition, negative for reduction
+    private Integer quantity;
 
-    @NotBlank(message = "Adjustment type is required")
-    private String type; // PURCHASE, SALE, ADJUSTMENT, DAMAGE, EXPIRY
+    @NotNull(message = "Transaction type is required")
+    private String type; // "PURCHASE", "SALE", "ADJUSTMENT", "DAMAGE", "RETURN", "TRANSFER"
 
-    @NotBlank(message = "Reason is required")
-    private String reason;
+    private String reference; // Reference number for the transaction
 
-    private String reference; // Reference number (e.g., PO number, invoice number)
+    private String notes; // Additional notes for the adjustment
+
+    private String reason; // Reason for adjustment (especially for damage/return)
 }

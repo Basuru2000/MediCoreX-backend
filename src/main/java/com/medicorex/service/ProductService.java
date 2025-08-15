@@ -275,14 +275,14 @@ public class ProductService {
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
 
-        return PageResponseDTO.<ProductDTO>builder()
-                .content(productDTOs)
-                .pageNumber(productPage.getNumber())
-                .pageSize(productPage.getSize())
-                .totalElements(productPage.getTotalElements())
-                .totalPages(productPage.getTotalPages())
-                .last(productPage.isLast())
-                .first(productPage.isFirst())
-                .build();
+        // Create PageResponseDTO without builder
+        PageResponseDTO<ProductDTO> response = new PageResponseDTO<>();
+        response.setContent(productDTOs);
+        response.setPage(productPage.getNumber());
+        response.setTotalPages(productPage.getTotalPages());
+        response.setTotalElements(productPage.getTotalElements());
+        response.setLast(productPage.isLast());
+
+        return response;
     }
 }

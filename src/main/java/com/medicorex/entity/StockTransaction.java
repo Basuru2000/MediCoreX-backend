@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
 import java.time.LocalDateTime;
 
 @Entity
@@ -13,6 +12,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class StockTransaction {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -21,35 +21,31 @@ public class StockTransaction {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
-    @Column(nullable = false)
-    private Integer quantity; // Positive for IN, negative for OUT
-
-    @Column(nullable = false)
-    private Integer balanceAfter; // Stock balance after this transaction
-
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private TransactionType type;
+    @Column(name = "transaction_type", nullable = false)
+    private TransactionType transactionType;
 
     @Column(nullable = false)
-    private String reason;
+    private Integer quantity;
+
+    @Column(name = "transaction_date", nullable = false)
+    private LocalDateTime transactionDate;
 
     @Column(length = 100)
     private String reference;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "performed_by", nullable = false)
-    private User performedBy;
+    @Column(columnDefinition = "TEXT")
+    private String notes;
 
-    @Column(nullable = false, updatable = false)
-    private LocalDateTime transactionDate = LocalDateTime.now();
+    @Column(name = "performed_by", length = 100)
+    private String performedBy;
 
-    public enum TransactionType {
-        PURCHASE,
-        SALE,
-        ADJUSTMENT,
-        DAMAGE,
-        EXPIRY,
-        INITIAL_STOCK
-    }
+    @Column(name = "before_quantity")
+    private Integer beforeQuantity;
+
+    @Column(name = "after_quantity")
+    private Integer afterQuantity;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
 }

@@ -8,13 +8,16 @@ import com.medicorex.exception.BusinessException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -23,7 +26,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final FileService fileService;
-    private final NotificationService notificationService; // ✅ ADD THIS
+    private final NotificationService notificationService;
 
     public List<UserDTO> getAllUsers() {
         return userRepository.findAll().stream()
@@ -54,6 +57,7 @@ public class UserService {
         return convertToDTO(user);
     }
 
+    @Transactional
     public UserDTO createUser(RegisterRequest registerRequest) {
         if (userRepository.existsByUsername(registerRequest.getUsername())) {
             throw new BusinessException("Username is already taken!");
@@ -75,16 +79,22 @@ public class UserService {
 
         User savedUser = userRepository.save(user);
 
-        // ✅ ADD notification when user is created
-        Map<String, String> params = new HashMap<>();
-        params.put("username", savedUser.getUsername());
-        params.put("role", savedUser.getRole().toString());
+        // ===== NOTIFICATION TRIGGER =====
+        try {
+            // Notify all managers about new user registration
+            Map<String, String> params = new HashMap<>();
+            params.put("username", savedUser.getUsername());
+            params.put("role", savedUser.getRole().toString());
 
-        // Notify managers about new user
-        notificationService.notifyUsersByRole(
-                Arrays.asList("HOSPITAL_MANAGER"),
-                "USER_CREATED", params, null
-        );
+            List<String> managerRoles = Arrays.asList("HOSPITAL_MANAGER");
+            notificationService.notifyUsersByRole(managerRoles, "USER_REGISTERED", params,
+                    Map.of("userId", savedUser.getId()));
+
+            log.info("User registration notification sent for: {}", savedUser.getUsername());
+        } catch (Exception e) {
+            log.error("Failed to send user registration notification: {}", e.getMessage());
+            // Don't fail the registration for notification errors
+        }
 
         return convertToDTO(savedUser);
     }
@@ -152,6 +162,7 @@ public class UserService {
         userRepository.deleteById(id);
     }
 
+    @Transactional
     public UserDTO toggleUserStatus(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
@@ -168,6 +179,32 @@ public class UserService {
 
         user.setActive(!user.getActive());
         User updatedUser = userRepository.save(user);
+
+        // ===== NOTIFICATION TRIGGER =====
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("username", updatedUser.getUsername());
+
+            String templateCode = updatedUser.getActive() ? "USER_ACTIVATED" : "USER_DEACTIVATED";
+
+            // Notify managers
+            List<String> managerRoles = Arrays.asList("HOSPITAL_MANAGER");
+            notificationService.notifyUsersByRole(managerRoles, templateCode, params,
+                    Map.of("userId", updatedUser.getId()));
+
+            // Also notify the affected user if they're being deactivated
+            if (!updatedUser.getActive()) {
+                notificationService.createNotificationFromTemplate(
+                        updatedUser.getId(),
+                        "USER_DEACTIVATED",
+                        params,
+                        null
+                );
+            }
+        } catch (Exception e) {
+            log.error("Failed to send user status change notification: {}", e.getMessage());
+        }
+
         return convertToDTO(updatedUser);
     }
 

@@ -44,7 +44,16 @@ public class StockController {
 
     @GetMapping("/history/{productId}")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF')")
-    public ResponseEntity<List<StockTransaction>> getProductStockHistory(@PathVariable Long productId) {
-        return ResponseEntity.ok(stockService.getProductStockHistory(productId));
+    public ResponseEntity<?> getProductHistory(
+            @PathVariable Long productId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        // Use the existing getStockTransactions method instead
+        Pageable pageable = PageRequest.of(page, size, Sort.by("transactionDate").descending());
+        PageResponseDTO<StockTransaction> history =
+                stockService.getStockTransactions(productId, pageable);
+
+        return ResponseEntity.ok(history);
     }
 }
