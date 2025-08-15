@@ -120,4 +120,41 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             @Param("category") NotificationCategory category,
             @Param("priority") NotificationPriority priority,
             Pageable pageable);
+
+    // Cleanup methods
+    int deleteByStatusAndCreatedAtBefore(NotificationStatus status, LocalDateTime date);
+
+    int deleteByExpiresAtBefore(LocalDateTime date);
+
+    int deleteByStatusAndReadAtBefore(NotificationStatus status, LocalDateTime date);
+
+    // Count methods for summaries
+    Long countByUserIdAndStatusAndPriority(Long userId, NotificationStatus status, NotificationPriority priority);
+
+    // Find for escalation
+    List<Notification> findByStatusAndPriorityAndCreatedAtBefore(
+            NotificationStatus status,
+            NotificationPriority priority,
+            LocalDateTime date
+    );
+
+    // Find recent notifications for grouping
+    @Query("SELECT n FROM Notification n WHERE n.user.id = :userId " +
+            "AND n.status = 'UNREAD' AND n.createdAt > :since " +
+            "ORDER BY n.type, n.category, n.createdAt DESC")
+    List<Notification> findRecentUnreadForGrouping(
+            @Param("userId") Long userId,
+            @Param("since") LocalDateTime since
+    );
+
+    // Check for duplicate notifications
+    @Query("SELECT COUNT(n) FROM Notification n WHERE n.user.id = :userId " +
+            "AND n.type = :type AND n.status = 'UNREAD' " +
+            "AND n.createdAt > :since AND n.title = :title")
+    Long countDuplicateNotifications(
+            @Param("userId") Long userId,
+            @Param("type") String type,
+            @Param("title") String title,
+            @Param("since") LocalDateTime since
+    );
 }
