@@ -8,6 +8,8 @@ import com.medicorex.entity.Notification;
 import com.medicorex.entity.Notification.*;
 import com.medicorex.entity.NotificationTemplate;
 import com.medicorex.entity.User;
+import com.medicorex.entity.Product;
+import com.medicorex.entity.ProductBatch;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.NotificationRepository;
 import com.medicorex.repository.NotificationTemplateRepository;
@@ -21,8 +23,10 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -511,6 +515,142 @@ public class NotificationService {
         }
 
         return totalGrouped;
+    }
+
+    // NEW HELPER METHODS ADDED BELOW
+
+    /**
+     * Create expiry alert notification (Enhanced version)
+     * Helper method for BatchExpiryTrackingService
+     */
+    public void createExpiryAlertNotificationEnhanced(Long batchId, String productName,
+                                                      String batchNumber, int daysUntilExpiry) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("productName", productName);
+            params.put("batchNumber", batchNumber);
+            params.put("days", String.valueOf(Math.abs(daysUntilExpiry)));
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("batchId", batchId);
+            actionData.put("action", "VIEW_BATCH");
+
+            String templateCode;
+            if (daysUntilExpiry <= 0) {
+                templateCode = "EXPIRED_PRODUCT";
+            } else if (daysUntilExpiry <= 7) {
+                templateCode = "EXPIRY_CRITICAL";
+            } else if (daysUntilExpiry <= 15) {
+                templateCode = "EXPIRY_WARNING";
+            } else {
+                templateCode = "EXPIRY_NOTICE";
+            }
+
+            notifyUsersByRole(
+                    Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                    templateCode,
+                    params,
+                    actionData
+            );
+
+            log.info("Created expiry notification for batch {} ({} days until expiry)",
+                    batchNumber, daysUntilExpiry);
+
+        } catch (Exception e) {
+            log.error("Failed to create expiry notification for batch {}: {}",
+                    batchNumber, e.getMessage());
+        }
+    }
+
+    /**
+     * Create batch notification
+     * Helper method for batch-related events
+     */
+    public void createBatchNotification(ProductBatch batch, String eventType) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("batchNumber", batch.getBatchNumber());
+            params.put("productName", batch.getProduct().getName());
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("batchId", batch.getId());
+            actionData.put("productId", batch.getProduct().getId());
+
+            String templateCode;
+            List<String> roles = Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF");
+
+            switch (eventType) {
+                case "CREATED":
+                    templateCode = "BATCH_CREATED";
+                    break;
+                case "DEPLETED":
+                    templateCode = "BATCH_DEPLETED";
+                    break;
+                case "EXPIRED":
+                    templateCode = "BATCH_EXPIRED";
+                    break;
+                case "EXPIRING":
+                    long daysUntilExpiry = ChronoUnit.DAYS.between(
+                            LocalDate.now(), batch.getExpiryDate());
+                    params.put("days", String.valueOf(daysUntilExpiry));
+                    templateCode = "BATCH_EXPIRING";
+                    break;
+                default:
+                    log.warn("Unknown batch event type: {}", eventType);
+                    return;
+            }
+
+            notifyUsersByRole(roles, templateCode, params, actionData);
+
+        } catch (Exception e) {
+            log.error("Failed to create batch notification: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Create stock notification
+     * Helper method for stock-related events
+     */
+    public void createStockNotification(Product product, String eventType,
+                                        Integer quantity, Integer newQuantity) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("productName", product.getName());
+            params.put("quantity", String.valueOf(quantity));
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("productId", product.getId());
+
+            String templateCode;
+            List<String> roles = Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF");
+
+            switch (eventType) {
+                case "LOW_STOCK":
+                    params.put("minStock", String.valueOf(product.getMinStock()));
+                    params.put("currentStock", String.valueOf(newQuantity));
+                    templateCode = "LOW_STOCK";
+                    break;
+                case "OUT_OF_STOCK":
+                    templateCode = "OUT_OF_STOCK";
+                    break;
+                case "STOCK_ADJUSTED":
+                    params.put("newQuantity", String.valueOf(newQuantity));
+                    params.put("adjustmentType", quantity > 0 ? "increased" : "decreased");
+                    templateCode = "STOCK_ADJUSTED";
+                    break;
+                case "STOCK_RECEIVED":
+                    templateCode = "STOCK_RECEIVED";
+                    break;
+                default:
+                    log.warn("Unknown stock event type: {}", eventType);
+                    return;
+            }
+
+            notifyUsersByRole(roles, templateCode, params, actionData);
+
+        } catch (Exception e) {
+            log.error("Failed to create stock notification: {}", e.getMessage());
+        }
     }
 
     // Helper methods

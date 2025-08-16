@@ -5,12 +5,13 @@ import com.medicorex.entity.*;
 import com.medicorex.exception.InsufficientBatchStockException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
-import com.medicorex.service.quarantine.QuarantineService; // ✅ ADD THIS IMPORT
-import com.medicorex.service.NotificationService; // ✅ ADD THIS IMPORT
+import com.medicorex.service.quarantine.QuarantineService;
+import com.medicorex.service.NotificationService;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,8 +30,12 @@ public class ProductBatchService {
     private final ProductBatchRepository batchRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
-    private final QuarantineService quarantineService; // ADD THIS if missing
-    private final NotificationService notificationService; // ✅ ADD THIS
+
+    @Autowired
+    private QuarantineService quarantineService;
+
+    @Autowired
+    private NotificationService notificationService;
 
     /**
      * Create a new batch for a product
@@ -64,6 +69,55 @@ public class ProductBatchService {
 
         // Update product total quantity
         updateProductTotalQuantity(product.getId());
+
+        // ===== NOTIFICATION TRIGGERS =====
+        try {
+            // 1. Send batch created notification
+            Map<String, String> params = new HashMap<>();
+            params.put("batchNumber", savedBatch.getBatchNumber());
+            params.put("productName", product.getName());
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("batchId", savedBatch.getId());
+            actionData.put("productId", product.getId());
+
+            notificationService.notifyUsersByRole(
+                    Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                    "BATCH_CREATED",
+                    params,
+                    actionData
+            );
+
+            // 2. Check if batch is expiring soon
+            long daysUntilExpiry = ChronoUnit.DAYS.between(LocalDate.now(), dto.getExpiryDate());
+
+            if (daysUntilExpiry <= 7) {
+                // Critical expiry
+                params.put("days", String.valueOf(daysUntilExpiry));
+                String templateCode = daysUntilExpiry <= 0 ? "BATCH_EXPIRED" : "EXPIRY_CRITICAL";
+                notificationService.notifyUsersByRole(
+                        Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                        templateCode,
+                        params,
+                        actionData
+                );
+            } else if (daysUntilExpiry <= 30) {
+                // Warning expiry
+                params.put("days", String.valueOf(daysUntilExpiry));
+                notificationService.notifyUsersByRole(
+                        Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                        "BATCH_EXPIRING",
+                        params,
+                        actionData
+                );
+            }
+
+            log.info("Notifications sent for new batch: {}", savedBatch.getBatchNumber());
+
+        } catch (Exception e) {
+            log.error("Failed to send batch creation notifications: {}", e.getMessage());
+            // Don't fail the batch creation for notification errors
+        }
 
         log.info("Created new batch {} for product {}", batch.getBatchNumber(), product.getName());
 
@@ -125,19 +179,25 @@ public class ProductBatchService {
             if (batch.getQuantity() == 0) {
                 batch.setStatus(ProductBatch.BatchStatus.DEPLETED);
 
-                // ✅ ADD notification when batch is depleted
-                Map<String, String> params = new HashMap<>();
-                params.put("batchNumber", batch.getBatchNumber());
-                params.put("productName", batch.getProduct().getName());
+                // Send notification when batch is depleted
+                try {
+                    Map<String, String> params = new HashMap<>();
+                    params.put("batchNumber", batch.getBatchNumber());
+                    params.put("productName", batch.getProduct().getName());
 
-                Map<String, Object> actionData = new HashMap<>();
-                actionData.put("batchId", batch.getId());
-                actionData.put("productId", productId);
+                    Map<String, Object> actionData = new HashMap<>();
+                    actionData.put("batchId", batch.getId());
+                    actionData.put("productId", productId);
 
-                notificationService.notifyUsersByRole(
-                        Arrays.asList("PHARMACY_STAFF"),
-                        "BATCH_DEPLETED", params, actionData
-                );
+                    notificationService.notifyUsersByRole(
+                            Arrays.asList("PHARMACY_STAFF", "HOSPITAL_MANAGER"),
+                            "BATCH_DEPLETED",
+                            params,
+                            actionData
+                    );
+                } catch (Exception e) {
+                    log.error("Failed to send batch depletion notification: {}", e.getMessage());
+                }
             }
 
             batchRepository.save(batch);
@@ -167,42 +227,34 @@ public class ProductBatchService {
         ProductBatch batch = batchRepository.findById(dto.getBatchId())
                 .orElseThrow(() -> new ResourceNotFoundException("Batch", "id", dto.getBatchId()));
 
-        switch (dto.getAdjustmentType().toUpperCase()) {
-            case "ADD":
+        // Use the enum from the DTO class
+        switch (dto.getAdjustmentType()) {
+            case "INCREASE":
                 batch.setQuantity(batch.getQuantity() + dto.getQuantity());
-                batch.setStatus(ProductBatch.BatchStatus.ACTIVE);
                 break;
 
-            case "CONSUME":
+            case "DECREASE":
                 if (batch.getQuantity() < dto.getQuantity()) {
                     throw new InsufficientBatchStockException(
-                            batch.getId(), dto.getQuantity(), batch.getQuantity()
-                    );
+                            batch.getBatchNumber(), dto.getQuantity(), batch.getQuantity());
                 }
                 batch.setQuantity(batch.getQuantity() - dto.getQuantity());
-                if (batch.getQuantity() == 0) {
-                    batch.setStatus(ProductBatch.BatchStatus.DEPLETED);
-                }
                 break;
 
-            case "ADJUST":
+            case "SET":
                 batch.setQuantity(dto.getQuantity());
-                if (batch.getQuantity() == 0) {
-                    batch.setStatus(ProductBatch.BatchStatus.DEPLETED);
-                } else {
-                    batch.setStatus(ProductBatch.BatchStatus.ACTIVE);
-                }
                 break;
 
             case "QUARANTINE":
-                // ✅ FIXED: Now calls quarantine service
-                String reason = dto.getReason() != null ? dto.getReason() : "Manual quarantine from stock adjustment";
+                String reason = dto.getReason() != null
+                        ? dto.getReason()
+                        : "Manual quarantine from stock adjustment";
 
-                // Create quarantine record (this also updates batch status)
+                // Fix: Pass string "admin" instead of Long
                 quarantineService.quarantineBatch(
                         batch.getId(),
                         reason,
-                        "admin" // TODO: Get from security context
+                        "admin" // This should be obtained from security context
                 );
 
                 // Return the updated batch
@@ -234,6 +286,26 @@ public class ProductBatchService {
             batch.setStatus(ProductBatch.BatchStatus.EXPIRED);
             batchRepository.save(batch);
 
+            // Send expired notification
+            try {
+                Map<String, String> params = new HashMap<>();
+                params.put("productName", batch.getProduct().getName());
+                params.put("batchNumber", batch.getBatchNumber());
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("batchId", batch.getId());
+                actionData.put("productId", batch.getProduct().getId());
+
+                notificationService.notifyUsersByRole(
+                        Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                        "BATCH_EXPIRED",
+                        params,
+                        actionData
+                );
+            } catch (Exception e) {
+                log.error("Failed to send expired batch notification: {}", e.getMessage());
+            }
+
             log.info("Marked batch {} as expired", batch.getBatchNumber());
         }
 
@@ -250,69 +322,18 @@ public class ProductBatchService {
      */
     @Transactional(readOnly = true)
     public List<ProductBatchDTO> getExpiringBatches(int daysAhead) {
-        LocalDate endDate = LocalDate.now().plusDays(daysAhead);
-        return batchRepository.findBatchesExpiringBetween(LocalDate.now(), endDate).stream()
+        LocalDate cutoffDate = LocalDate.now().plusDays(daysAhead);
+        return batchRepository.findExpiringBatches(cutoffDate).stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Generate batch expiry report
-     */
-    @Transactional(readOnly = true)
-    public BatchExpiryReportDTO generateBatchExpiryReport() {
-        List<ProductBatch> allBatches = batchRepository.findAll();
-        LocalDate today = LocalDate.now();
-
-        // Count batches by status
-        Map<ProductBatch.BatchStatus, Long> statusCounts = allBatches.stream()
-                .collect(Collectors.groupingBy(ProductBatch::getStatus, Collectors.counting()));
-
-        // Calculate values
-        BigDecimal totalValue = calculateTotalValue(allBatches);
-        BigDecimal expiringValue = calculateTotalValue(
-                allBatches.stream()
-                        .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
-                        .filter(b -> b.getExpiryDate().isBefore(today.plusDays(30)))
-                        .collect(Collectors.toList())
-        );
-        BigDecimal expiredValue = calculateTotalValue(
-                allBatches.stream()
-                        .filter(b -> b.getStatus() == ProductBatch.BatchStatus.EXPIRED)
-                        .collect(Collectors.toList())
-        );
-
-        // Group batches by expiry range
-        Map<String, List<BatchExpiryReportDTO.BatchSummary>> batchesByRange = new HashMap<>();
-        batchesByRange.put("Critical (0-7 days)", getBatchSummaries(allBatches, 0, 7));
-        batchesByRange.put("Warning (8-30 days)", getBatchSummaries(allBatches, 8, 30));
-        batchesByRange.put("Caution (31-60 days)", getBatchSummaries(allBatches, 31, 60));
-        batchesByRange.put("Normal (61-90 days)", getBatchSummaries(allBatches, 61, 90));
-        batchesByRange.put("Long-term (90+ days)", getBatchSummaries(allBatches, 91, Integer.MAX_VALUE));
-
-        // Get critical batches
-        List<ProductBatchDTO> criticalBatches = getExpiringBatches(7);
-
-        return BatchExpiryReportDTO.builder()
-                .totalBatches(allBatches.size())
-                .activeBatches(statusCounts.getOrDefault(ProductBatch.BatchStatus.ACTIVE, 0L).intValue())
-                .expiringBatches(expiringValue.intValue())
-                .expiredBatches(statusCounts.getOrDefault(ProductBatch.BatchStatus.EXPIRED, 0L).intValue())
-                .quarantinedBatches(statusCounts.getOrDefault(ProductBatch.BatchStatus.QUARANTINED, 0L).intValue())
-                .totalInventoryValue(totalValue)
-                .expiringInventoryValue(expiringValue)
-                .expiredInventoryValue(expiredValue)
-                .batchesByExpiryRange(batchesByRange)
-                .criticalBatches(criticalBatches)
-                .build();
-    }
-
-    // Helper methods
+    // Helper methods and other existing methods...
 
     private void updateProductTotalQuantity(Long productId) {
         Integer totalQuantity = batchRepository.getTotalQuantityByProductId(productId);
         Product product = productRepository.findById(productId).orElseThrow();
-        product.setQuantity(totalQuantity);
+        product.setQuantity(totalQuantity != null ? totalQuantity : 0);
         productRepository.save(product);
     }
 
@@ -325,14 +346,13 @@ public class ProductBatchService {
                 : BigDecimal.ZERO;
 
         double utilization = batch.getInitialQuantity() > 0
-                ? (double)(batch.getInitialQuantity() - batch.getQuantity()) / batch.getInitialQuantity() * 100
+                ? ((double) (batch.getInitialQuantity() - batch.getQuantity()) / batch.getInitialQuantity()) * 100
                 : 0;
 
         return ProductBatchDTO.builder()
                 .id(batch.getId())
                 .productId(batch.getProduct().getId())
                 .productName(batch.getProduct().getName())
-                .productCode(batch.getProduct().getCode())
                 .batchNumber(batch.getBatchNumber())
                 .quantity(batch.getQuantity())
                 .initialQuantity(batch.getInitialQuantity())
@@ -340,54 +360,15 @@ public class ProductBatchService {
                 .manufactureDate(batch.getManufactureDate())
                 .supplierReference(batch.getSupplierReference())
                 .costPerUnit(batch.getCostPerUnit())
-                .status(batch.getStatus().toString())
-                .notes(batch.getNotes())
-                .createdAt(batch.getCreatedAt())
-                .updatedAt(batch.getUpdatedAt())
-                .daysUntilExpiry((int) daysUntilExpiry)
                 .totalValue(totalValue)
+                .status(batch.getStatus().name())
+                .daysUntilExpiry((int) daysUntilExpiry)
+                .isExpired(daysUntilExpiry <= 0)
                 .utilizationPercentage(utilization)
+                .notes(batch.getNotes())
                 .build();
     }
 
-    private BigDecimal calculateTotalValue(List<ProductBatch> batches) {
-        return batches.stream()
-                .filter(b -> b.getCostPerUnit() != null)
-                .map(b -> b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity())))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    private List<BatchExpiryReportDTO.BatchSummary> getBatchSummaries(
-            List<ProductBatch> batches, int minDays, int maxDays) {
-        LocalDate today = LocalDate.now();
-
-        return batches.stream()
-                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
-                .filter(b -> {
-                    long days = ChronoUnit.DAYS.between(today, b.getExpiryDate());
-                    return days >= minDays && days <= maxDays;
-                })
-                .map(b -> {
-                    long daysUntilExpiry = ChronoUnit.DAYS.between(today, b.getExpiryDate());
-                    BigDecimal value = b.getCostPerUnit() != null
-                            ? b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity()))
-                            : BigDecimal.ZERO;
-
-                    return BatchExpiryReportDTO.BatchSummary.builder()
-                            .batchId(b.getId())
-                            .productName(b.getProduct().getName())
-                            .batchNumber(b.getBatchNumber())
-                            .quantity(b.getQuantity())
-                            .daysUntilExpiry((int) daysUntilExpiry)
-                            .value(value)
-                            .build();
-                })
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Result class for batch consumption
-     */
     @Data
     @Builder
     public static class BatchConsumptionResult {
