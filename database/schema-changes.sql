@@ -621,6 +621,58 @@ BEGIN
 END$$
 DELIMITER ;
 
+
+-- Add missing columns to products table
+-- Run this in your MySQL database
+ALTER TABLE products
+    ADD COLUMN min_stock INT DEFAULT 10 AFTER quantity,
+    ADD COLUMN max_stock INT DEFAULT 1000 AFTER min_stock,
+    ADD COLUMN last_updated TIMESTAMP NULL AFTER updated_at,
+    ADD COLUMN last_stock_check TIMESTAMP NULL AFTER last_updated;
+
+UPDATE products
+SET min_stock = CASE
+                    WHEN quantity < 10 THEN 5
+                    WHEN quantity < 50 THEN 10
+                    WHEN quantity < 100 THEN 20
+                    ELSE 50
+    END
+WHERE min_stock IS NULL;
+
+-- Update stock_transactions table to add missing columns
+-- Run this in your MySQL database
+ALTER TABLE stock_transactions
+    ADD COLUMN notes TEXT AFTER reference,
+    ADD COLUMN before_quantity INT AFTER performed_by,
+    ADD COLUMN after_quantity INT AFTER before_quantity,
+    ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER after_quantity;
+
+
+-- =====================================================
+-- FIX NOTIFICATION TEMPLATE MISMATCHES
+-- Run this SQL to ensure templates match service code
+-- =====================================================
+
+-- Update existing templates or insert if they don't exist
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active) VALUES
+-- Batch Templates (ensure these exist)
+('BATCH_CREATED', 'BATCH', 'New Batch Created', 'New batch {{batchNumber}} created for {{productName}}', 'LOW', true),
+('BATCH_EXPIRING', 'BATCH', 'Batch Expiring Soon', 'Batch {{batchNumber}} of {{productName}} expires in {{days}} days', 'HIGH', true),
+('BATCH_EXPIRED', 'BATCH', 'Batch Expired', 'Batch {{batchNumber}} of {{productName}} has expired', 'CRITICAL', true),
+('BATCH_DEPLETED', 'BATCH', 'Batch Depleted', 'Batch {{batchNumber}} of {{productName}} has been fully consumed', 'MEDIUM', true),
+
+-- Quarantine Templates (fix naming)
+('QUARANTINE_CREATED', 'QUARANTINE', 'Item Quarantined', 'Product {{productName}} (Batch: {{batchNumber}}) has been quarantined. Quantity: {{quantity}}. Reason: {{reason}}', 'HIGH', true),
+('QUARANTINE_PENDING', 'QUARANTINE', 'Quarantine Review Required', '{{count}} items are pending review in quarantine', 'HIGH', true),
+('QUARANTINE_APPROVED_DISPOSAL', 'QUARANTINE', 'Approved for Disposal', 'Product {{productName}} has been approved for disposal. Please proceed with disposal process.', 'HIGH', true),
+('QUARANTINE_APPROVED_RETURN', 'QUARANTINE', 'Approved for Return', 'Product {{productName}} has been approved for return to supplier.', 'MEDIUM', true),
+('QUARANTINE_DISPOSED', 'QUARANTINE', 'Item Disposed', 'Product {{productName}} (Batch: {{batchNumber}}) has been disposed.', 'MEDIUM', true),
+('QUARANTINE_RETURNED', 'QUARANTINE', 'Item Returned', 'Product {{productName}} (Batch: {{batchNumber}}) has been returned to supplier.', 'MEDIUM', true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template),
+                     priority = VALUES(priority),
+                     active = true;
 -- =====================================================
 -- END OF NOTIFICATION SYSTEM SCHEMA CHANGES
 -- =====================================================
