@@ -34,4 +34,5 @@ public class ProductBatchDTO {
     private Integer daysUntilExpiry;
     private BigDecimal totalValue;
     private Double utilizationPercentage; // (initialQuantity - quantity) / initialQuantity * 100
+    private Boolean isExpired;
 }
