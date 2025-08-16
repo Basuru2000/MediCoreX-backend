@@ -12,6 +12,8 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -227,21 +229,24 @@ public class ProductBatchService {
         ProductBatch batch = batchRepository.findById(dto.getBatchId())
                 .orElseThrow(() -> new ResourceNotFoundException("Batch", "id", dto.getBatchId()));
 
-        // Use the enum from the DTO class
-        switch (dto.getAdjustmentType()) {
+        // Handle different adjustment types
+        switch (dto.getAdjustmentType().toUpperCase()) {
+            case "ADD":
             case "INCREASE":
                 batch.setQuantity(batch.getQuantity() + dto.getQuantity());
                 break;
 
+            case "CONSUME":
             case "DECREASE":
                 if (batch.getQuantity() < dto.getQuantity()) {
                     throw new InsufficientBatchStockException(
-                            batch.getBatchNumber(), dto.getQuantity(), batch.getQuantity());
+                            dto.getBatchId(), dto.getQuantity(), batch.getQuantity());
                 }
                 batch.setQuantity(batch.getQuantity() - dto.getQuantity());
                 break;
 
             case "SET":
+            case "ADJUST":
                 batch.setQuantity(dto.getQuantity());
                 break;
 
@@ -250,18 +255,27 @@ public class ProductBatchService {
                         ? dto.getReason()
                         : "Manual quarantine from stock adjustment";
 
-                // Fix: Pass string "admin" instead of Long
+                // Get the current user from security context
+                String performedBy = getCurrentUsername();
+
                 quarantineService.quarantineBatch(
                         batch.getId(),
                         reason,
-                        "admin" // This should be obtained from security context
+                        performedBy
                 );
 
-                // Return the updated batch
+                // Return the updated batch after quarantine
                 return convertToDTO(batchRepository.findById(batch.getId()).orElseThrow());
 
             default:
                 throw new IllegalArgumentException("Invalid adjustment type: " + dto.getAdjustmentType());
+        }
+
+        // Update batch status if needed
+        if (batch.getQuantity() == 0 && batch.getStatus() == ProductBatch.BatchStatus.ACTIVE) {
+            batch.setStatus(ProductBatch.BatchStatus.DEPLETED);
+        } else if (batch.getQuantity() > 0 && batch.getStatus() == ProductBatch.BatchStatus.DEPLETED) {
+            batch.setStatus(ProductBatch.BatchStatus.ACTIVE);
         }
 
         ProductBatch updatedBatch = batchRepository.save(batch);
@@ -328,13 +342,91 @@ public class ProductBatchService {
                 .collect(Collectors.toList());
     }
 
-    // Helper methods and other existing methods...
+    /**
+     * Generate batch expiry report
+     */
+    @Transactional(readOnly = true)
+    public BatchExpiryReportDTO generateBatchExpiryReport() {
+        List<ProductBatch> allBatches = batchRepository.findAll();
+        LocalDate today = LocalDate.now();
+
+        // Count batches by status
+        long totalBatches = allBatches.size();
+        long activeBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                .count();
+        long expiredBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.EXPIRED)
+                .count();
+        long quarantinedBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.QUARANTINED)
+                .count();
+
+        // Get expiring batches count
+        LocalDate thirtyDaysFromNow = today.plusDays(30);
+        long expiringBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                .filter(b -> b.getExpiryDate() != null)
+                .filter(b -> b.getExpiryDate().isAfter(today) && b.getExpiryDate().isBefore(thirtyDaysFromNow))
+                .count();
+
+        // Calculate inventory values
+        BigDecimal totalInventoryValue = allBatches.stream()
+                .filter(b -> b.getCostPerUnit() != null && b.getQuantity() > 0)
+                .map(b -> b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal expiringInventoryValue = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                .filter(b -> b.getExpiryDate() != null)
+                .filter(b -> b.getExpiryDate().isAfter(today) && b.getExpiryDate().isBefore(thirtyDaysFromNow))
+                .filter(b -> b.getCostPerUnit() != null)
+                .map(b -> b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal expiredInventoryValue = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.EXPIRED)
+                .filter(b -> b.getCostPerUnit() != null)
+                .map(b -> b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Get critical batches (expiring in next 7 days)
+        LocalDate sevenDaysFromNow = today.plusDays(7);
+        List<ProductBatchDTO> criticalBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                .filter(b -> b.getExpiryDate() != null)
+                .filter(b -> b.getExpiryDate().isAfter(today) && b.getExpiryDate().isBefore(sevenDaysFromNow))
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+
+        return BatchExpiryReportDTO.builder()
+                .totalBatches((int) totalBatches)
+                .activeBatches((int) activeBatches)
+                .expiringBatches((int) expiringBatches)
+                .expiredBatches((int) expiredBatches)
+                .quarantinedBatches((int) quarantinedBatches)
+                .totalInventoryValue(totalInventoryValue)
+                .expiringInventoryValue(expiringInventoryValue)
+                .expiredInventoryValue(expiredInventoryValue)
+                .criticalBatches(criticalBatches)
+                .build();
+    }
+
+    // Helper methods
 
     private void updateProductTotalQuantity(Long productId) {
         Integer totalQuantity = batchRepository.getTotalQuantityByProductId(productId);
         Product product = productRepository.findById(productId).orElseThrow();
         product.setQuantity(totalQuantity != null ? totalQuantity : 0);
         productRepository.save(product);
+    }
+
+    private String getCurrentUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated()) {
+            return authentication.getName();
+        }
+        return "SYSTEM";
     }
 
     private ProductBatchDTO convertToDTO(ProductBatch batch) {
@@ -353,6 +445,7 @@ public class ProductBatchService {
                 .id(batch.getId())
                 .productId(batch.getProduct().getId())
                 .productName(batch.getProduct().getName())
+                .productCode(batch.getProduct().getCode())
                 .batchNumber(batch.getBatchNumber())
                 .quantity(batch.getQuantity())
                 .initialQuantity(batch.getInitialQuantity())
@@ -360,12 +453,14 @@ public class ProductBatchService {
                 .manufactureDate(batch.getManufactureDate())
                 .supplierReference(batch.getSupplierReference())
                 .costPerUnit(batch.getCostPerUnit())
-                .totalValue(totalValue)
                 .status(batch.getStatus().name())
-                .daysUntilExpiry((int) daysUntilExpiry)
-                .isExpired(daysUntilExpiry <= 0)
-                .utilizationPercentage(utilization)
                 .notes(batch.getNotes())
+                .createdAt(batch.getCreatedAt())
+                .updatedAt(batch.getUpdatedAt())
+                .daysUntilExpiry((int) daysUntilExpiry)
+                .totalValue(totalValue)
+                .utilizationPercentage(utilization)
+                .isExpired(daysUntilExpiry <= 0)
                 .build();
     }
 
