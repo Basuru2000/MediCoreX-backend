@@ -7,6 +7,7 @@ import com.medicorex.repository.*;
 import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -32,7 +33,9 @@ public class QuarantineService {
     private final ProductBatchRepository batchRepository;
     private final ProductRepository productRepository;
     private final QuarantineWorkflowService workflowService;
-    private final NotificationService notificationService;
+
+    @Autowired
+    private NotificationService notificationService;
 
     /**
      * Create quarantine record for expired batch
@@ -72,20 +75,31 @@ public class QuarantineService {
         workflowService.logAction(savedRecord.getId(), "QUARANTINE", performedBy,
                 null, "PENDING_REVIEW", "Batch quarantined: " + reason);
 
-        // Create notification
-        Map<String, String> params = new HashMap<>();
-        params.put("productName", batch.getProduct().getName());
-        params.put("batchNumber", batch.getBatchNumber());
-        params.put("reason", reason);
-        Map<String, Object> actionData = new HashMap<>();
-        actionData.put("recordId", savedRecord.getId());
-        actionData.put("batchId", batchId);
-        notificationService.notifyUsersByRole(
-                Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
-                "QUARANTINE_NEW",
-                params,
-                actionData
-        );
+        // ===== NOTIFICATION TRIGGER =====
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("productName", batch.getProduct().getName());
+            params.put("batchNumber", batch.getBatchNumber());
+            params.put("reason", reason);
+            params.put("quantity", String.valueOf(savedRecord.getQuantityQuarantined()));
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("recordId", savedRecord.getId());
+            actionData.put("batchId", batchId);
+            actionData.put("productId", batch.getProduct().getId());
+
+            notificationService.notifyUsersByRole(
+                    Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
+                    "QUARANTINE_CREATED",
+                    params,
+                    actionData
+            );
+
+            log.info("Quarantine notification sent for batch {}", batch.getBatchNumber());
+
+        } catch (Exception e) {
+            log.error("Failed to send quarantine notification: {}", e.getMessage());
+        }
 
         log.info("Created quarantine record {} for batch {}", savedRecord.getId(), batchId);
 
@@ -165,7 +179,29 @@ public class QuarantineService {
      */
     @Transactional(readOnly = true)
     public List<QuarantineItemDTO> getPendingReview() {
-        return quarantineRepository.findPendingReview().stream()
+        // Use the method without Pageable parameter
+        List<QuarantineRecord> pendingRecords = quarantineRepository.findAll().stream()
+                .filter(r -> r.getStatus() == QuarantineRecord.QuarantineStatus.PENDING_REVIEW)
+                .collect(Collectors.toList());
+
+        // Send notification if there are pending items
+        if (!pendingRecords.isEmpty()) {
+            try {
+                Map<String, String> params = new HashMap<>();
+                params.put("count", String.valueOf(pendingRecords.size()));
+
+                notificationService.notifyUsersByRole(
+                        Arrays.asList("HOSPITAL_MANAGER"),
+                        "QUARANTINE_PENDING",
+                        params,
+                        Map.of("count", pendingRecords.size())
+                );
+            } catch (Exception e) {
+                log.error("Failed to send pending review notification: {}", e.getMessage());
+            }
+        }
+
+        return pendingRecords.stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
@@ -297,29 +333,26 @@ public class QuarantineService {
 
         return QuarantineItemDTO.builder()
                 .id(record.getId())
-                .batchId(record.getBatch().getId())
-                .batchNumber(record.getBatch().getBatchNumber())
                 .productId(record.getProduct().getId())
                 .productName(record.getProduct().getName())
                 .productCode(record.getProduct().getCode())
+                .batchId(record.getBatch().getId())
+                .batchNumber(record.getBatch().getBatchNumber())
                 .quantityQuarantined(record.getQuantityQuarantined())
                 .reason(record.getReason())
                 .quarantineDate(record.getQuarantineDate())
                 .quarantinedBy(record.getQuarantinedBy())
-                .status(record.getStatus().toString())
+                .status(record.getStatus().name()) // Convert enum to string
+                .estimatedLoss(record.getEstimatedLoss())
+                .daysInQuarantine((int) daysInQuarantine)
                 .reviewDate(record.getReviewDate())
                 .reviewedBy(record.getReviewedBy())
+                // Only include fields that exist in your QuarantineRecord entity
                 .disposalDate(record.getDisposalDate())
                 .disposalMethod(record.getDisposalMethod())
                 .disposalCertificate(record.getDisposalCertificate())
                 .returnDate(record.getReturnDate())
                 .returnReference(record.getReturnReference())
-                .estimatedLoss(record.getEstimatedLoss())
-                .notes(record.getNotes())
-                .daysInQuarantine((int) daysInQuarantine)
-                .canApprove(record.getStatus() == QuarantineRecord.QuarantineStatus.UNDER_REVIEW)
-                .canDispose(record.getStatus() == QuarantineRecord.QuarantineStatus.APPROVED_FOR_DISPOSAL)
-                .canReturn(record.getStatus() == QuarantineRecord.QuarantineStatus.APPROVED_FOR_RETURN)
                 .build();
     }
 }

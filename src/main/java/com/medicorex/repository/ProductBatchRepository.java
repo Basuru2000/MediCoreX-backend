@@ -52,4 +52,26 @@ public interface ProductBatchRepository extends JpaRepository<ProductBatch, Long
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+
+    // Find batches by status
+    List<ProductBatch> findByStatus(BatchStatus status);
+
+    // Count batches expiring between dates with specific status
+    @Query("SELECT COUNT(b) FROM ProductBatch b WHERE b.expiryDate BETWEEN :startDate AND :endDate AND b.status = :status")
+    long countByExpiryDateBetweenAndStatus(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("status") BatchStatus status
+    );
+
+    // Count expired batches with specific status
+    @Query("SELECT COUNT(b) FROM ProductBatch b WHERE b.expiryDate < :date AND b.status = :status")
+    long countByExpiryDateBeforeAndStatus(
+            @Param("date") LocalDate date,
+            @Param("status") BatchStatus status
+    );
+
+    // Additional useful methods
+    @Query("SELECT b FROM ProductBatch b WHERE b.status = :status ORDER BY b.expiryDate ASC")
+    List<ProductBatch> findByStatusOrderByExpiryDate(@Param("status") BatchStatus status);
 }
