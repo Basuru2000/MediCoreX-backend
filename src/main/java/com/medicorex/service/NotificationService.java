@@ -390,6 +390,62 @@ public class NotificationService {
     }
 
     /**
+     * Clean up archived notifications older than specified days
+     */
+    public int cleanupArchivedNotifications(int daysToKeep) {
+        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(daysToKeep);
+        List<Notification> archivedNotifications = notificationRepository
+                .findByCreatedAtBeforeAndStatus(cutoffDate, NotificationStatus.ARCHIVED);
+        
+        if (!archivedNotifications.isEmpty()) {
+            notificationRepository.deleteAll(archivedNotifications);
+            log.info("Deleted {} archived notifications older than {} days", archivedNotifications.size(), daysToKeep);
+        }
+        
+        return archivedNotifications.size();
+    }
+
+    /**
+     * Clean up expired notifications
+     */
+    public int cleanupExpiredNotifications() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Notification> expiredNotifications = notificationRepository
+                .findByExpiresAtBeforeAndStatusNot(now, NotificationStatus.ARCHIVED);
+        
+        if (!expiredNotifications.isEmpty()) {
+            for (Notification notification : expiredNotifications) {
+                Long userId = notification.getUser().getId();
+                notificationRepository.delete(notification);
+                updateUserUnreadCount(userId);
+            }
+            log.info("Deleted {} expired notifications", expiredNotifications.size());
+        }
+        
+        return expiredNotifications.size();
+    }
+
+    /**
+     * Clean up old read notifications
+     */
+    public int cleanupOldReadNotifications(int daysToKeep) {
+        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(daysToKeep);
+        List<Notification> oldReadNotifications = notificationRepository
+                .findByReadAtBeforeAndStatus(cutoffDate, NotificationStatus.READ);
+        
+        if (!oldReadNotifications.isEmpty()) {
+            for (Notification notification : oldReadNotifications) {
+                Long userId = notification.getUser().getId();
+                notificationRepository.delete(notification);
+                updateUserUnreadCount(userId);
+            }
+            log.info("Deleted {} old read notifications older than {} days", oldReadNotifications.size(), daysToKeep);
+        }
+        
+        return oldReadNotifications.size();
+    }
+
+    /**
      * Send daily summary to managers
      * FIX: Use enum directly, not string
      */
