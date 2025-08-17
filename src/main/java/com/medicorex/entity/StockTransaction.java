@@ -28,6 +28,15 @@ public class StockTransaction {
     @Column(nullable = false)
     private Integer quantity;
 
+    @Column(name = "balance_after", nullable = false)
+    private Integer balanceAfter;
+
+    @Column(name = "type", nullable = false, length = 20)
+    private String type;
+
+    @Column(nullable = false, length = 255)
+    private String reason;
+
     @Column(name = "transaction_date", nullable = false)
     private LocalDateTime transactionDate;
 
@@ -37,8 +46,8 @@ public class StockTransaction {
     @Column(columnDefinition = "TEXT")
     private String notes;
 
-    @Column(name = "performed_by", length = 100)
-    private String performedBy;
+    @Column(name = "performed_by")
+    private Long performedBy;
 
     @Column(name = "before_quantity")
     private Integer beforeQuantity;
