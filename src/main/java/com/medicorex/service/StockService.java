@@ -57,10 +57,13 @@ public class StockService {
         transaction.setProduct(product);
         transaction.setTransactionType(TransactionType.fromString(adjustmentDTO.getType()));
         transaction.setQuantity(Math.abs(adjustmentDTO.getQuantity()));
+        transaction.setBalanceAfter(newQuantity); // Required field from original schema
+        transaction.setType(adjustmentDTO.getType().toUpperCase()); // Required field from original schema
+        transaction.setReason(adjustmentDTO.getNotes() != null ? adjustmentDTO.getNotes() : "Stock adjustment"); // Required field
         transaction.setTransactionDate(LocalDateTime.now());
         transaction.setReference(adjustmentDTO.getReference());
         transaction.setNotes(adjustmentDTO.getNotes());
-        transaction.setPerformedBy(getCurrentUsername());
+        transaction.setPerformedBy(getCurrentUserId());
         transaction.setBeforeQuantity(oldQuantity);
         transaction.setAfterQuantity(newQuantity);
         transaction.setCreatedAt(LocalDateTime.now());
@@ -100,7 +103,7 @@ public class StockService {
                         Map.of("productId", product.getId()));
             }
 
-            log.info("Stock adjusted for product: {} by user: {}", product.getName(), getCurrentUsername());
+            log.info("Stock adjusted for product: {} by user ID: {}", product.getName(), getCurrentUserId());
 
         } catch (Exception e) {
             log.error("Failed to send stock adjustment notifications: {}", e.getMessage());
@@ -129,12 +132,35 @@ public class StockService {
         return response;
     }
 
-    private String getCurrentUsername() {
+    private Long getCurrentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.isAuthenticated()) {
-            return "SYSTEM";
+        if (authentication != null && authentication.isAuthenticated() && 
+            !authentication.getName().equals("anonymousUser")) {
+            try {
+                String username = authentication.getName();
+                User user = userRepository.findByUsername(username).orElse(null);
+                if (user != null) {
+                    return user.getId();
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get current user ID: {}", e.getMessage());
+            }
         }
-        return "SYSTEM";
+        
+        // Fallback to system user or create if doesn't exist
+        User systemUser = userRepository.findByUsername("SYSTEM").orElse(null);
+        if (systemUser == null) {
+            // Create system user if it doesn't exist
+            systemUser = new User();
+            systemUser.setUsername("SYSTEM");
+            systemUser.setPassword("N/A");
+            systemUser.setEmail("system@medicorex.com");
+            systemUser.setFullName("System User");
+            systemUser.setRole(User.UserRole.HOSPITAL_MANAGER); // Use enum instead of string
+            systemUser.setActive(true);
+            systemUser = userRepository.save(systemUser);
+        }
+        return systemUser.getId();
     }
 }
 
