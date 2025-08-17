@@ -673,6 +673,105 @@ ON DUPLICATE KEY UPDATE
                      message_template = VALUES(message_template),
                      priority = VALUES(priority),
                      active = true;
+
+-- =====================================================
+-- Fix Notification Templates
+-- Run this to ensure all required templates exist
+-- =====================================================
+
+-- First, check if BATCH_CREATED template exists
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'BATCH_CREATED', 'BATCH', 'New Batch Created',
+       'New batch {{batchNumber}} created for {{productName}} with quantity {{quantity}}',
+       'MEDIUM', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'BATCH_CREATED'
+);
+
+-- Update QUARANTINE_NEW to QUARANTINE_CREATED if it exists
+UPDATE notification_templates
+SET code = 'QUARANTINE_CREATED'
+WHERE code = 'QUARANTINE_NEW';
+
+-- Ensure QUARANTINE_CREATED exists
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'QUARANTINE_CREATED', 'QUARANTINE', 'Item Quarantined',
+       'Product {{productName}} (Batch: {{batchNumber}}) has been quarantined. Reason: {{reason}}',
+       'HIGH', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'QUARANTINE_CREATED'
+);
+
+-- Ensure USER_REGISTERED exists
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'USER_REGISTERED', 'USER', 'New User Registration',
+       'New user {{username}} ({{role}}) has been registered',
+       'LOW', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'USER_REGISTERED'
+);
+
+-- Add other missing templates
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'USER_ROLE_CHANGED', 'USER', 'Role Updated',
+       'Your role has been updated to {{role}}',
+       'MEDIUM', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'USER_ROLE_CHANGED'
+);
+
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'USER_DEACTIVATED', 'USER', 'User Deactivated',
+       'User {{username}} has been deactivated',
+       'MEDIUM', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'USER_DEACTIVATED'
+);
+
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'USER_ACTIVATED', 'USER', 'User Activated',
+       'User {{username}} has been activated',
+       'LOW', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'USER_ACTIVATED'
+);
+
+-- Verify all templates are loaded
+SELECT code, category, priority, active FROM notification_templates ORDER BY category, code;
+
+-- =====================================================
+-- Add Missing Notification Templates
+-- Run this if you get "template not found" errors
+-- =====================================================
+
+-- Daily Summary Template
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'DAILY_SUMMARY', 'SYSTEM', 'Daily Summary',
+       'Daily system summary for {{date}}. {{summaryDetails}}',
+       'LOW', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'DAILY_SUMMARY'
+);
+
+-- Escalation Notice Template
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'ESCALATION_NOTICE', 'SYSTEM', 'Critical Notification Escalation',
+       'Critical notification for {{originalUser}} has been unread for {{hoursOverdue}} hours: {{title}}',
+       'CRITICAL', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'ESCALATION_NOTICE'
+);
+
+-- Quarantine Notification Template (generic)
+INSERT INTO notification_templates (code, category, title_template, message_template, priority, active, created_at)
+SELECT 'QUARANTINE_NOTIFICATION', 'QUARANTINE', '{{title}}',
+       '{{message}}',
+       'HIGH', TRUE, NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_templates WHERE code = 'QUARANTINE_NOTIFICATION'
+);
+
+
 -- =====================================================
 -- END OF NOTIFICATION SYSTEM SCHEMA CHANGES
 -- =====================================================
