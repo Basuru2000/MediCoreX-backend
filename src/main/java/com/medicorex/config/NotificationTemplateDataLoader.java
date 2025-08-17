@@ -47,16 +47,25 @@ public class NotificationTemplateDataLoader {
                                 "{{productName}} (Batch: {{batchNumber}}) expires in {{days}} days!",
                                 NotificationPriority.CRITICAL),
                         createTemplate("EXPIRY_WARNING", "EXPIRY", "Expiry Warning",
-                                "{{productName}} (Batch: {{batchNumber}}) will expire in {{days}} days",
+                                "{{productName}} (Batch: {{batchNumber}}) will expire on {{expiryDate}}",
                                 NotificationPriority.HIGH),
-                        createTemplate("EXPIRED_PRODUCT", "EXPIRY", "Product Expired",
-                                "{{productName}} (Batch: {{batchNumber}}) has expired and needs immediate attention",
-                                NotificationPriority.CRITICAL),
+                        createTemplate("EXPIRY_NOTICE", "EXPIRY", "Expiry Notice",
+                                "{{productName}} (Batch: {{batchNumber}}) expires in {{days}} days",
+                                NotificationPriority.MEDIUM),
 
-                        // Quarantine Templates
+                        // Quarantine Templates - FIX: Changed from QUARANTINE_NEW to QUARANTINE_CREATED
                         createTemplate("QUARANTINE_CREATED", "QUARANTINE", "Item Quarantined",
-                                "{{productName}} (Batch: {{batchNumber}}) has been quarantined. Reason: {{reason}}",
+                                "Product {{productName}} (Batch: {{batchNumber}}) has been quarantined. Reason: {{reason}}",
                                 NotificationPriority.HIGH),
+                        createTemplate("QUARANTINE_APPROVED_DISPOSAL", "QUARANTINE", "Quarantine Item Approved for Disposal",
+                                "Product {{productName}} has been approved for disposal. Please proceed with disposal process.",
+                                NotificationPriority.HIGH),
+                        createTemplate("QUARANTINE_APPROVED_RETURN", "QUARANTINE", "Quarantine Item Approved for Return",
+                                "Product {{productName}} has been approved for return to supplier.",
+                                NotificationPriority.MEDIUM),
+                        createTemplate("QUARANTINE_DISPOSED", "QUARANTINE", "Item Disposed",
+                                "Product {{productName}} (Batch: {{batchNumber}}) has been disposed. Reason: {{reason}}",
+                                NotificationPriority.MEDIUM),
                         createTemplate("QUARANTINE_PENDING", "QUARANTINE", "Quarantine Review Required",
                                 "{{count}} items are pending review in quarantine",
                                 NotificationPriority.HIGH),
@@ -68,6 +77,29 @@ public class NotificationTemplateDataLoader {
                         createTemplate("USER_ACTIVATED", "USER", "User Activated",
                                 "User {{username}} has been activated",
                                 NotificationPriority.LOW),
+                        createTemplate("USER_DEACTIVATED", "USER", "User Deactivated",
+                                "User {{username}} has been deactivated",
+                                NotificationPriority.MEDIUM),
+                        createTemplate("USER_ROLE_CHANGED", "USER", "Role Updated",
+                                "Your role has been updated to {{role}}",
+                                NotificationPriority.MEDIUM),
+
+                        // Batch Templates - FIX: Added BATCH_CREATED template
+                        createTemplate("BATCH_CREATED", "BATCH", "New Batch Created",
+                                "New batch {{batchNumber}} created for {{productName}} with quantity {{quantity}}",
+                                NotificationPriority.MEDIUM),
+                        createTemplate("BATCH_EXPIRING", "BATCH", "Batch Expiring Soon",
+                                "Batch {{batchNumber}} of {{productName}} expires in {{days}} days",
+                                NotificationPriority.HIGH),
+                        createTemplate("BATCH_EXPIRED", "BATCH", "Batch Expired",
+                                "Batch {{batchNumber}} of {{productName}} has expired",
+                                NotificationPriority.CRITICAL),
+                        createTemplate("BATCH_CONSUMED", "BATCH", "Batch Stock Consumed",
+                                "{{quantity}} units consumed from batch {{batchNumber}} of {{productName}}",
+                                NotificationPriority.LOW),
+                        createTemplate("BATCH_ADJUSTED", "BATCH", "Batch Stock Adjusted",
+                                "Batch {{batchNumber}} stock adjusted: {{adjustment}}",
+                                NotificationPriority.MEDIUM),
 
                         // System Templates
                         createTemplate("TEST_NOTIFICATION", "SYSTEM", "Test Notification",
@@ -80,27 +112,37 @@ public class NotificationTemplateDataLoader {
                         // Report Templates
                         createTemplate("REPORT_GENERATED", "REPORT", "Report Ready",
                                 "Your {{reportType}} report is ready for download",
-                                NotificationPriority.LOW),
-
-                        // Batch Templates
-                        createTemplate("BATCH_EXPIRING", "BATCH", "Batch Expiring Soon",
-                                "Batch {{batchNumber}} of {{productName}} expires in {{days}} days",
-                                NotificationPriority.HIGH),
-                        createTemplate("BATCH_EXPIRED", "BATCH", "Batch Expired",
-                                "Batch {{batchNumber}} of {{productName}} has expired",
-                                NotificationPriority.CRITICAL)
+                                NotificationPriority.LOW)
                 );
 
                 templateRepository.saveAll(templates);
                 log.info("Loaded {} notification templates", templates.size());
             } else {
-                log.info("Notification templates already exist. Skipping initialization.");
+                log.info("Notification templates already exist. Checking for missing templates...");
+
+                // Check and add missing templates
+                if (!templateRepository.existsByCode("BATCH_CREATED")) {
+                    NotificationTemplate batchCreated = createTemplate("BATCH_CREATED", "BATCH",
+                            "New Batch Created",
+                            "New batch {{batchNumber}} created for {{productName}} with quantity {{quantity}}",
+                            NotificationPriority.MEDIUM);
+                    templateRepository.save(batchCreated);
+                    log.info("Added missing BATCH_CREATED template");
+                }
+
+                // Fix template code if QUARANTINE_NEW exists but not QUARANTINE_CREATED
+                templateRepository.findByCode("QUARANTINE_NEW").ifPresent(template -> {
+                    template.setCode("QUARANTINE_CREATED");
+                    templateRepository.save(template);
+                    log.info("Updated QUARANTINE_NEW to QUARANTINE_CREATED");
+                });
             }
         };
     }
 
     private NotificationTemplate createTemplate(String code, String category,
-                                                String titleTemplate, String messageTemplate, NotificationPriority priority) {
+                                                String titleTemplate, String messageTemplate,
+                                                NotificationPriority priority) {
         NotificationTemplate template = new NotificationTemplate();
         template.setCode(code);
         template.setCategory(category);

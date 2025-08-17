@@ -6,6 +6,7 @@ import com.medicorex.entity.Notification.NotificationCategory;
 import com.medicorex.entity.Notification.NotificationPriority;
 import com.medicorex.entity.QuarantineRecord;
 import com.medicorex.entity.User;
+import com.medicorex.entity.User.UserRole;
 import com.medicorex.repository.UserRepository;
 import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +45,7 @@ public class QuarantineNotificationService {
         data.put("batchId", record.getBatch().getId());
         data.put("action", "QUARANTINE_CREATED");
 
+        // Use List<String> for roles - NotificationService will convert them
         sendNotificationToRoles(title, message, data,
                 List.of("HOSPITAL_MANAGER", "PHARMACY_STAFF"));
     }
@@ -84,154 +86,160 @@ public class QuarantineNotificationService {
 
         Map<String, Object> data = new HashMap<>();
         data.put("recordId", record.getId());
+        data.put("productId", record.getProduct().getId());
+        data.put("batchId", record.getBatch().getId());
         data.put("action", "APPROVED_FOR_DISPOSAL");
 
         sendNotificationToRoles(title, message, data,
-                List.of("PHARMACY_STAFF"));
+                List.of("HOSPITAL_MANAGER", "PHARMACY_STAFF"));
     }
 
     /**
-     * Send notification when item is disposed
+     * Send notification when item is approved for return
      */
-    public void notifyDisposed(QuarantineRecord record) {
-        String title = "Item Disposed";
+    public void notifyApprovedForReturn(QuarantineRecord record) {
+        String title = "Item Approved for Return";
         String message = String.format(
-                "Product %s (Batch: %s) has been disposed. Method: %s, Certificate: %s",
+                "Product %s (Batch: %s) has been approved for return to supplier.",
                 record.getProduct().getName(),
-                record.getBatch().getBatchNumber(),
-                record.getDisposalMethod(),
-                record.getDisposalCertificate()
+                record.getBatch().getBatchNumber()
         );
 
         Map<String, Object> data = new HashMap<>();
         data.put("recordId", record.getId());
-        data.put("action", "DISPOSED");
-
-        sendNotificationToRoles(title, message, data,
-                List.of("HOSPITAL_MANAGER"));
-    }
-
-    /**
-     * Send escalation notification for overdue items
-     * FIXED VERSION
-     */
-    public void notifyEscalation(List<QuarantineRecord> overdueRecords) {
-        if (overdueRecords.isEmpty()) return;
-
-        String title = "⚠️ Quarantine Escalation Alert";
-        String message = String.format(
-                "%d quarantine items have exceeded review timeout and require immediate attention.",
-                overdueRecords.size()
-        );
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("count", overdueRecords.size());
-        data.put("recordIds", overdueRecords.stream()
-                .map(QuarantineRecord::getId)
-                .collect(Collectors.toList()));
-        data.put("action", "ESCALATION");
-        data.put("priority", "HIGH");
-
-        sendNotificationToRoles(title, message, data,
-                List.of("HOSPITAL_MANAGER"));
-    }
-
-    /**
-     * Send notification for successful return
-     */
-    public void notifyReturned(QuarantineRecord record) {
-        String title = "Item Returned to Supplier";
-        String message = String.format(
-                "Product %s (Batch: %s) has been successfully returned. Reference: %s",
-                record.getProduct().getName(),
-                record.getBatch().getBatchNumber(),
-                record.getReturnReference()
-        );
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("recordId", record.getId());
-        data.put("action", "RETURNED");
+        data.put("productId", record.getProduct().getId());
+        data.put("batchId", record.getBatch().getId());
+        data.put("action", "APPROVED_FOR_RETURN");
 
         sendNotificationToRoles(title, message, data,
                 List.of("HOSPITAL_MANAGER", "PROCUREMENT_OFFICER"));
     }
 
     /**
-     * Send weekly summary notification
+     * Send notification when item is disposed
      */
-    public void sendWeeklySummary(Map<String, Object> summaryData) {
-        String title = "Weekly Quarantine Summary";
+    public void notifyItemDisposed(QuarantineRecord record, String disposalMethod) {
+        String title = "Item Disposed";
         String message = String.format(
-                "Weekly Summary: %d new items, %d resolved, %d pending. Total loss: $%.2f",
-                summaryData.get("newItems"),
-                summaryData.get("resolved"),
-                summaryData.get("pending"),
-                summaryData.get("totalLoss")
+                "Product %s (Batch: %s) has been disposed using method: %s",
+                record.getProduct().getName(),
+                record.getBatch().getBatchNumber(),
+                disposalMethod
         );
 
-        sendNotificationToRoles(title, message, summaryData,
+        Map<String, Object> data = new HashMap<>();
+        data.put("recordId", record.getId());
+        data.put("productId", record.getProduct().getId());
+        data.put("batchId", record.getBatch().getId());
+        data.put("disposalMethod", disposalMethod);
+        data.put("action", "ITEM_DISPOSED");
+
+        sendNotificationToRoles(title, message, data,
+                List.of("HOSPITAL_MANAGER", "PHARMACY_STAFF"));
+    }
+
+    /**
+     * Send notification when item is returned to supplier
+     */
+    public void notifyItemReturned(QuarantineRecord record) {
+        String title = "Item Returned to Supplier";
+        String message = String.format(
+                "Product %s (Batch: %s) has been successfully returned to supplier.",
+                record.getProduct().getName(),
+                record.getBatch().getBatchNumber()
+        );
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("recordId", record.getId());
+        data.put("productId", record.getProduct().getId());
+        data.put("batchId", record.getBatch().getId());
+        data.put("action", "ITEM_RETURNED");
+
+        sendNotificationToRoles(title, message, data,
+                List.of("HOSPITAL_MANAGER", "PROCUREMENT_OFFICER"));
+    }
+
+    /**
+     * Send notification for escalation
+     */
+    public void notifyEscalation(List<QuarantineRecord> escalatedRecords) {
+        if (escalatedRecords.isEmpty()) return;
+
+        String title = "Quarantine Items Require Urgent Attention";
+        String message = String.format(
+                "%d quarantine items have been pending for over 3 days and require immediate attention.",
+                escalatedRecords.size()
+        );
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("count", escalatedRecords.size());
+        data.put("recordIds", escalatedRecords.stream()
+                .map(QuarantineRecord::getId)
+                .collect(Collectors.toList()));
+        data.put("action", "ESCALATION");
+
+        // Only notify managers for escalations
+        sendNotificationToRoles(title, message, data,
                 List.of("HOSPITAL_MANAGER"));
     }
 
     /**
-     * Helper method to send notifications to users with specific roles
-     * FIXED VERSION
+     * Helper method to send notifications to multiple roles
+     * This method accepts List<String> and lets NotificationService handle conversion
      */
     private void sendNotificationToRoles(String title, String message,
-                                         Map<String, Object> data, List<String> roles) {
+                                         Map<String, Object> data, List<String> roleStrings) {
         try {
-            List<User> users = userRepository.findByRoleIn(roles);
+            // Create parameters for template-based notification
+            Map<String, String> params = new HashMap<>();
+            params.put("title", title);
+            params.put("message", message);
 
-            for (User user : users) {
-                NotificationCreateDTO dto = NotificationCreateDTO.builder()
-                        .userId(user.getId())
-                        .type("QUARANTINE_NOTIFICATION")
-                        .category(NotificationCategory.QUARANTINE)
-                        .title(title)
-                        .message(message)
-                        .priority(determinePriority(data))  // FIX: Use enum value from method
-                        .actionData(data)
-                        .build();
+            // Use the NotificationService's notifyUsersByRole method which accepts List<String>
+            notificationService.notifyUsersByRole(
+                    roleStrings,  // Pass List<String> directly
+                    "QUARANTINE_NOTIFICATION",
+                    params,
+                    data
+            );
 
-                // FIX: Use createCustomNotification instead of createNotification
-                notificationService.createCustomNotification(dto);
-            }
+            log.info("Quarantine notification sent to roles: {}", roleStrings);
 
-            log.info("Sent quarantine notification to {} users with roles: {}",
-                    users.size(), roles);
         } catch (Exception e) {
             log.error("Failed to send quarantine notification: {}", e.getMessage(), e);
-        }
-    }
 
-    /**
-     * Alternative method using template-based notifications
-     */
-    private void sendTemplateNotificationToRoles(String templateCode,
-                                                 Map<String, String> params,
-                                                 Map<String, Object> actionData,
-                                                 List<String> roles) {
-        // For template-based notifications, use this approach
-        notificationService.notifyUsersByRole(roles, templateCode, params, actionData);
-    }
+            // Fallback: Try to create custom notifications directly
+            try {
+                // Convert strings to enums for direct user lookup
+                List<UserRole> roleEnums = roleStrings.stream()
+                        .map(role -> UserRole.valueOf(role))
+                        .collect(Collectors.toList());
 
-    /**
-     * Determine notification priority based on action
-     * FIXED VERSION - returns enum instead of string
-     */
-    private NotificationPriority determinePriority(Map<String, Object> data) {
-        String action = (String) data.get("action");
-        if (action == null) return NotificationPriority.MEDIUM;
+                List<User> users = userRepository.findByRoleIn(roleEnums);
 
-        switch (action) {
-            case "ESCALATION":
-            case "QUARANTINE_CREATED":
-                return NotificationPriority.HIGH;
-            case "PENDING_REVIEW":
-            case "APPROVED_FOR_DISPOSAL":
-                return NotificationPriority.MEDIUM;
-            default:
-                return NotificationPriority.LOW;
+                for (User user : users) {
+                    try {
+                        NotificationCreateDTO dto = NotificationCreateDTO.builder()
+                                .userId(user.getId())
+                                .type("QUARANTINE_NOTIFICATION")
+                                .category(NotificationCategory.QUARANTINE)
+                                .title(title)
+                                .message(message)
+                                .priority(NotificationPriority.HIGH)
+                                .actionData(data)
+                                .build();
+
+                        notificationService.createCustomNotification(dto);
+                        log.debug("Created custom notification for user: {}", user.getUsername());
+                    } catch (Exception ex) {
+                        log.error("Failed to create notification for user {}: {}",
+                                user.getUsername(), ex.getMessage());
+                    }
+                }
+            } catch (Exception fallbackError) {
+                log.error("Fallback notification creation also failed: {}",
+                        fallbackError.getMessage());
+            }
         }
     }
 }
