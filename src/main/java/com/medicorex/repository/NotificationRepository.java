@@ -162,9 +162,7 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
      * Find unescalated critical notifications
      */
     @Query("SELECT n FROM Notification n WHERE n.createdAt < :thresholdTime " +
-            "AND n.priority = :priority AND n.status = :status " +
-            "AND NOT EXISTS (SELECT 1 FROM Notification e WHERE e.type = 'ESCALATION_NOTICE' " +
-            "AND e.actionData LIKE CONCAT('%', n.id, '%'))")
+            "AND n.priority = :priority AND n.status = :status")
     List<Notification> findUnescalatedCritical(
             @Param("thresholdTime") LocalDateTime thresholdTime,
             @Param("priority") NotificationPriority priority,
@@ -180,4 +178,19 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             @Param("cutoffDate") LocalDateTime cutoffDate,
             @Param("status") NotificationStatus status
     );
+
+    /**
+     * Find archived notifications older than specified date for cleanup
+     */
+    List<Notification> findByCreatedAtBeforeAndStatus(LocalDateTime cutoffDate, NotificationStatus status);
+
+    /**
+     * Find expired notifications that are not archived
+     */
+    List<Notification> findByExpiresAtBeforeAndStatusNot(LocalDateTime now, NotificationStatus status);
+
+    /**
+     * Find old read notifications for cleanup
+     */
+    List<Notification> findByReadAtBeforeAndStatus(LocalDateTime cutoffDate, NotificationStatus status);
 }
