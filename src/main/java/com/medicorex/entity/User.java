@@ -1,9 +1,12 @@
 package com.medicorex.entity;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -11,73 +14,57 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class User {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
+    @Column(nullable = false, unique = true, length = 50)
     private String username;
 
     @Column(nullable = false)
+    @JsonIgnore
     private String password;
 
-    @Column(unique = true, nullable = false)
+    @Column(nullable = false, unique = true, length = 100)
     private String email;
 
-    @Column(nullable = false)
+    @Column(name = "full_name", nullable = false, length = 100)
     private String fullName;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private UserRole role;
+    @Column(nullable = false, length = 50)
+    private UserRole role;  // Changed back to UserRole
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(length = 20)
+    @Builder.Default
     private Gender gender = Gender.NOT_SPECIFIED;
 
-    @Column(name = "profile_image_url")
+    @Column(name = "profile_image_url", length = 500)
     private String profileImageUrl;
 
     @Column(nullable = false)
+    @Builder.Default
     private Boolean active = true;
 
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
+    @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // NEW FIELDS FOR NOTIFICATION SUPPORT:
-
     @Column(name = "unread_notifications")
+    @Builder.Default
     private Integer unreadNotifications = 0;
 
     @Column(name = "last_notification_check")
     private LocalDateTime lastNotificationCheck;
 
-    @PreUpdate
-    public void preUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
-
-    // GETTER/SETTER METHODS FOR NOTIFICATION FIELDS:
-
-    public Integer getUnreadNotifications() {
-        return unreadNotifications != null ? unreadNotifications : 0;
-    }
-
-    public void setUnreadNotifications(Integer unreadNotifications) {
-        this.unreadNotifications = unreadNotifications;
-    }
-
-    public LocalDateTime getLastNotificationCheck() {
-        return lastNotificationCheck;
-    }
-
-    public void setLastNotificationCheck(LocalDateTime lastNotificationCheck) {
-        this.lastNotificationCheck = lastNotificationCheck;
-    }
-
+    // UserRole enum - matches what DTOs expect
     public enum UserRole {
         HOSPITAL_MANAGER,
         PHARMACY_STAFF,
@@ -87,6 +74,20 @@ public class User {
     public enum Gender {
         MALE,
         FEMALE,
+        OTHER,
         NOT_SPECIFIED
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
     }
 }

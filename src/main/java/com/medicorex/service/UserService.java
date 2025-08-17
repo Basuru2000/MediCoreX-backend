@@ -223,3 +223,15 @@ public class UserService {
                 .build();
     }
 }
+
+
+// ========================================
+// IMPORTANT: The pattern is always:
+// ========================================
+// 1. Services pass List<String> with role names
+// 2. NotificationService.notifyUsersByRole() accepts List<String>
+// 3. NotificationService internally converts String to UserRole enum
+// 4. UserRepository.findByRoleIn() accepts List<UserRole> enum
+
+// DO NOT pass UserRole enums from services to NotificationService
+// DO NOT pass strings directly to UserRepository methods

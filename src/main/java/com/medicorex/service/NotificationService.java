@@ -8,6 +8,7 @@ import com.medicorex.entity.Notification;
 import com.medicorex.entity.Notification.*;
 import com.medicorex.entity.NotificationTemplate;
 import com.medicorex.entity.User;
+import com.medicorex.entity.User.UserRole;
 import com.medicorex.entity.Product;
 import com.medicorex.entity.ProductBatch;
 import com.medicorex.exception.ResourceNotFoundException;
@@ -111,26 +112,128 @@ public class NotificationService {
     }
 
     /**
-     * Send notification to multiple users by role
+     * Send notification to multiple users by role - ASYNC version
+     * This method accepts String roles and converts them internally
      */
     @Async
-    public void notifyUsersByRole(List<String> roles, String templateCode,
+    public void notifyUsersByRole(List<String> roleStrings, String templateCode,
                                   Map<String, String> params, Map<String, Object> actionData) {
-        List<User> users = userRepository.findByRoleIn(roles);
+        try {
+            log.info("=== Starting ASYNC notification send to roles: {} with template: {}", roleStrings, templateCode);
 
-        for (User user : users) {
-            try {
-                createNotificationFromTemplate(user.getId(), templateCode, params, actionData);
-            } catch (Exception e) {
-                log.error("Failed to create notification for user {}: {}", user.getId(), e.getMessage());
+            // Convert string roles to enum values
+            List<User.UserRole> roleEnums = new ArrayList<>();
+            for (String roleStr : roleStrings) {
+                try {
+                    User.UserRole role = User.UserRole.valueOf(roleStr.toUpperCase().replace(" ", "_"));
+                    roleEnums.add(role);
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid role string: {}", roleStr);
+                }
             }
-        }
 
-        log.info("Sent {} notifications to users with roles {}", users.size(), roles);
+            if (!roleEnums.isEmpty()) {
+                List<User> users = userRepository.findByRoleIn(roleEnums);
+                log.info("Found {} users with roles {}", users.size(), roleEnums);
+
+                int successCount = 0;
+                int failCount = 0;
+
+                for (User user : users) {
+                    try {
+                        NotificationDTO notification = createNotificationFromTemplate(
+                                user.getId(),
+                                templateCode,
+                                params,
+                                actionData
+                        );
+                        log.info("Created notification {} for user: {}", notification.getId(), user.getUsername());
+                        successCount++;
+                    } catch (Exception e) {
+                        failCount++;
+                        log.error("Failed to create notification for user {} ({}): {}",
+                                user.getId(), user.getUsername(), e.getMessage());
+                    }
+                }
+
+                log.info("=== Notification send completed. Success: {}, Failed: {} for template: {}",
+                        successCount, failCount, templateCode);
+            } else {
+                log.warn("No valid roles found from: {}", roleStrings);
+            }
+
+        } catch (Exception e) {
+            log.error("=== CRITICAL ERROR in notifyUsersByRole: {}", e.getMessage(), e);
+        }
     }
 
     /**
-     * Get notifications for user
+     * SYNCHRONOUS version for testing - accepts String roles
+     */
+    public void notifyUsersByRoleSync(List<String> roleStrings, String templateCode,
+                                      Map<String, String> params, Map<String, Object> actionData) {
+        log.info("=== SYNC notification send to roles: {} with template: {}", roleStrings, templateCode);
+
+        try {
+            // Convert string roles to enum values
+            List<User.UserRole> roleEnums = new ArrayList<>();
+            for (String roleStr : roleStrings) {
+                try {
+                    User.UserRole role = User.UserRole.valueOf(roleStr.toUpperCase().replace(" ", "_"));
+                    roleEnums.add(role);
+                    log.debug("Converted role string '{}' to enum {}", roleStr, role);
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid role string: {}", roleStr);
+                }
+            }
+
+            if (roleEnums.isEmpty()) {
+                log.error("No valid roles found from: {}", roleStrings);
+                return;
+            }
+
+            // Find users with these roles
+            List<User> users = userRepository.findByRoleIn(roleEnums);
+            log.info("Found {} users with roles {}", users.size(), roleEnums);
+
+            if (users.isEmpty()) {
+                log.warn("No users found with roles: {}", roleEnums);
+
+                // Debug: Show all users and their roles
+                List<User> allUsers = userRepository.findAll();
+                log.debug("All users in system:");
+                for (User u : allUsers) {
+                    log.debug("  - {} ({}): role={}", u.getId(), u.getUsername(), u.getRole());
+                }
+                return;
+            }
+
+            // Create notifications for each user
+            for (User user : users) {
+                try {
+                    NotificationDTO notification = createNotificationFromTemplate(
+                            user.getId(),
+                            templateCode,
+                            params,
+                            actionData
+                    );
+                    log.info("✓ Created notification {} for user {} ({})",
+                            notification.getId(), user.getUsername(), user.getRole());
+
+                } catch (Exception e) {
+                    log.error("✗ Failed to create notification for user {} ({}): {}",
+                            user.getUsername(), user.getRole(), e.getMessage());
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("SYNC notification send failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to send notifications", e);
+        }
+    }
+
+    /**
+     * Get notifications for user with filters
      */
     @Transactional(readOnly = true)
     public PageResponseDTO<NotificationDTO> getUserNotifications(
@@ -139,14 +242,14 @@ public class NotificationService {
             NotificationCategory category,
             NotificationPriority priority,
             Pageable pageable) {
-        // Use single dynamic query
+
         Page<Notification> notificationPage = notificationRepository.findByUserIdWithFilters(
                 userId, status, category, priority, pageable);
-        // Convert entities to DTOs
+
         List<NotificationDTO> dtos = notificationPage.getContent().stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
-        // Create PageResponseDTO without builder
+
         PageResponseDTO<NotificationDTO> response = new PageResponseDTO<>();
         response.setContent(dtos);
         response.setPage(notificationPage.getNumber());
@@ -155,17 +258,6 @@ public class NotificationService {
         response.setLast(notificationPage.isLast());
 
         return response;
-
-        // OR if PageResponseDTO has all-args constructor:
-        /*
-        return new PageResponseDTO<>(
-            dtos,
-            notificationPage.getNumber(),
-            notificationPage.getTotalPages(),
-            notificationPage.getTotalElements(),
-            notificationPage.isLast()
-        );
-        */
     }
 
     /**
@@ -176,7 +268,8 @@ public class NotificationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Notification", "id", notificationId));
 
         if (notification.getStatus() != NotificationStatus.READ) {
-            notification.markAsRead();
+            notification.setStatus(NotificationStatus.READ);
+            notification.setReadAt(LocalDateTime.now());
             notification = notificationRepository.save(notification);
             updateUserUnreadCount(notification.getUser().getId());
         }
@@ -188,9 +281,16 @@ public class NotificationService {
      * Mark all notifications as read for user
      */
     public void markAllAsRead(Long userId) {
-        notificationRepository.markAllAsReadForUser(userId, LocalDateTime.now());
+        List<Notification> unreadNotifications = notificationRepository.findByUserIdAndStatus(
+                userId, NotificationStatus.UNREAD);
+
+        for (Notification notification : unreadNotifications) {
+            notification.setStatus(NotificationStatus.READ);
+            notification.setReadAt(LocalDateTime.now());
+        }
+
+        notificationRepository.saveAll(unreadNotifications);
         updateUserUnreadCount(userId);
-        log.info("Marked all notifications as read for user {}", userId);
     }
 
     /**
@@ -200,12 +300,9 @@ public class NotificationService {
         Notification notification = notificationRepository.findById(notificationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Notification", "id", notificationId));
 
-        notification.archive();
+        notification.setStatus(NotificationStatus.ARCHIVED);
         notificationRepository.save(notification);
-
-        if (notification.getStatus() == NotificationStatus.UNREAD) {
-            updateUserUnreadCount(notification.getUser().getId());
-        }
+        updateUserUnreadCount(notification.getUser().getId());
     }
 
     /**
@@ -216,245 +313,188 @@ public class NotificationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Notification", "id", notificationId));
 
         Long userId = notification.getUser().getId();
-        boolean wasUnread = notification.getStatus() == NotificationStatus.UNREAD;
-
-        notificationRepository.deleteById(notificationId);
-
-        if (wasUnread) {
-            updateUserUnreadCount(userId);
-        }
-    }
-
-    /**
-     * Get notification summary for user
-     * FIXED: Handle null values from SQL query
-     */
-    @Transactional(readOnly = true)
-    public NotificationSummaryDTO getNotificationSummary(Long userId) {
-        Object[] summary = notificationRepository.getNotificationSummary(userId);
-
-        if (summary != null && summary.length > 0 && summary[0] != null) {
-            Object[] data = (Object[]) summary[0];
-
-            // FIX: Handle null values with proper null checks
-            Long totalCount = data[0] != null ? ((Number) data[0]).longValue() : 0L;
-            Long unreadCount = data[1] != null ? ((Number) data[1]).longValue() : 0L;
-            Long criticalCount = data[2] != null ? ((Number) data[2]).longValue() : 0L;
-
-            return NotificationSummaryDTO.builder()
-                    .totalCount(totalCount)
-                    .unreadCount(unreadCount)
-                    .criticalCount(criticalCount)
-                    .highPriorityCount(0L)  // You can calculate this if needed
-                    .todayCount(0L)  // You can calculate this if needed
-                    .build();
-        }
-
-        // Return default values if no data
-        return NotificationSummaryDTO.builder()
-                .totalCount(0L)
-                .unreadCount(0L)
-                .criticalCount(0L)
-                .highPriorityCount(0L)
-                .todayCount(0L)
-                .build();
+        notificationRepository.delete(notification);
+        updateUserUnreadCount(userId);
     }
 
     /**
      * Get unread count for user
      */
-    @Transactional(readOnly = true)
     public Long getUnreadCount(Long userId) {
         return notificationRepository.countByUserIdAndStatus(userId, NotificationStatus.UNREAD);
     }
 
     /**
+     * Get notification summary for user
+     */
+    public NotificationSummaryDTO getNotificationSummary(Long userId) {
+        // Get all notifications for user
+        List<Notification> allNotifications = notificationRepository.findByUserIdOrderByCreatedAtDesc(
+                userId, PageRequest.of(0, 1000)).getContent();
+
+        long totalCount = allNotifications.size();
+        long unreadCount = allNotifications.stream()
+                .filter(n -> n.getStatus() == NotificationStatus.UNREAD)
+                .count();
+        long criticalCount = allNotifications.stream()
+                .filter(n -> n.getStatus() == NotificationStatus.UNREAD &&
+                        n.getPriority() == NotificationPriority.CRITICAL)
+                .count();
+        long highPriorityCount = allNotifications.stream()
+                .filter(n -> n.getStatus() == NotificationStatus.UNREAD &&
+                        n.getPriority() == NotificationPriority.HIGH)
+                .count();
+
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        long todayCount = allNotifications.stream()
+                .filter(n -> n.getCreatedAt().isAfter(todayStart))
+                .count();
+
+        return NotificationSummaryDTO.builder()
+                .totalCount(totalCount)
+                .unreadCount(unreadCount)
+                .criticalCount(criticalCount)
+                .highPriorityCount(highPriorityCount)
+                .todayCount(todayCount)
+                .build();
+    }
+
+    /**
      * Get recent critical notifications
      */
-    @Transactional(readOnly = true)
     public List<NotificationDTO> getRecentCriticalNotifications(Long userId) {
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
-        return notificationRepository.findRecentCriticalNotifications(userId, since)
-                .stream()
+        List<NotificationPriority> criticalPriorities = Arrays.asList(
+                NotificationPriority.CRITICAL,
+                NotificationPriority.HIGH
+        );
+
+        List<Notification> criticalNotifications = notificationRepository
+                .findByUserIdAndStatusAndPriorityIn(
+                        userId,
+                        NotificationStatus.UNREAD,
+                        criticalPriorities
+                );
+
+        return criticalNotifications.stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
     /**
-     * Clean up old notifications (scheduled task)
+     * Clean up old notifications
      */
-    @Transactional
-    public void cleanupOldNotifications() {
-        // Delete expired notifications
-        notificationRepository.deleteExpiredNotifications(LocalDateTime.now());
-
-        // Delete archived notifications older than 90 days
-        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(90);
-        notificationRepository.deleteOldArchivedNotifications(cutoffDate);
-
-        log.info("Cleaned up old and expired notifications");
-    }
-
-    /**
-     * Check and create stock alert notifications
-     */
-    public void createStockAlertNotification(Long productId, String productName,
-                                             Integer currentQuantity, Integer minStock) {
-        Map<String, String> params = new HashMap<>();
-        params.put("productName", productName);
-        params.put("quantity", String.valueOf(currentQuantity));
-        params.put("minStock", String.valueOf(minStock));
-
-        Map<String, Object> actionData = new HashMap<>();
-        actionData.put("productId", productId);
-        actionData.put("type", "stock_alert");
-
-        String templateCode = currentQuantity == 0 ? "STOCK_OUT" : "STOCK_LOW";
-
-        // Notify relevant roles
-        notifyUsersByRole(
-                Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER"),
-                templateCode, params, actionData
-        );
-    }
-
-    /**
-     * Create expiry alert notification
-     */
-    public void createExpiryAlertNotification(Long batchId, String productName,
-                                              String batchNumber, Integer daysUntilExpiry) {
-        Map<String, String> params = new HashMap<>();
-        params.put("productName", productName);
-        params.put("batchNumber", batchNumber);
-        params.put("days", String.valueOf(daysUntilExpiry));
-
-        Map<String, Object> actionData = new HashMap<>();
-        actionData.put("batchId", batchId);
-        actionData.put("type", "expiry_alert");
-
-        String templateCode;
-        if (daysUntilExpiry <= 0) {
-            templateCode = "EXPIRED";
-        } else if (daysUntilExpiry <= 7) {
-            templateCode = "EXPIRY_7_DAYS";
-        } else if (daysUntilExpiry <= 30) {
-            templateCode = "EXPIRY_30_DAYS";
-        } else if (daysUntilExpiry <= 60) {
-            templateCode = "EXPIRY_60_DAYS";
-        } else {
-            templateCode = "EXPIRY_90_DAYS";
-        }
-
-        notifyUsersByRole(
-                Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
-                templateCode, params, actionData
-        );
-    }
-
-    /**
-     * Clean up archived notifications older than specified days
-     */
-    @Transactional
-    public int cleanupArchivedNotifications(int days) {
-        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(days);
-        return notificationRepository.deleteByStatusAndCreatedAtBefore(
-                NotificationStatus.ARCHIVED, cutoffDate);
-    }
-
-    /**
-     * Clean up expired notifications
-     */
-    @Transactional
-    public int cleanupExpiredNotifications() {
-        return notificationRepository.deleteByExpiresAtBefore(LocalDateTime.now());
-    }
-
-    /**
-     * Clean up old read notifications
-     */
-    @Transactional
-    public int cleanupOldReadNotifications(int days) {
-        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(days);
-        return notificationRepository.deleteByStatusAndReadAtBefore(
-                NotificationStatus.READ, cutoffDate);
+    public int cleanupOldNotifications(int daysToKeep) {
+        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(daysToKeep);
+        return notificationRepository.deleteByCreatedAtBeforeAndStatus(
+                cutoffDate, NotificationStatus.ARCHIVED);
     }
 
     /**
      * Send daily summary to managers
+     * FIX: Use enum directly, not string
      */
-    @Transactional
     public int sendDailySummaryToManagers() {
-        List<User> managers = userRepository.findByRole("HOSPITAL_MANAGER");
-        int summariesSent = 0;
+        // Use enum directly - no string conversion needed
+        List<User> managers = userRepository.findByRole(UserRole.HOSPITAL_MANAGER);
 
+        int count = 0;
         for (User manager : managers) {
             try {
-                // Get critical unread count
-                Long criticalCount = notificationRepository.countByUserIdAndStatusAndPriority(
-                        manager.getId(), NotificationStatus.UNREAD, NotificationPriority.CRITICAL);
+                // Create summary notification
+                Map<String, String> params = new HashMap<>();
+                params.put("date", LocalDate.now().toString());
+                params.put("summaryDetails", "Daily system summary");
 
-                Long highCount = notificationRepository.countByUserIdAndStatusAndPriority(
-                        manager.getId(), NotificationStatus.UNREAD, NotificationPriority.HIGH);
+                // Check if template exists before using it
+                if (!templateRepository.existsByCode("DAILY_SUMMARY")) {
+                    log.warn("DAILY_SUMMARY template not found, creating custom notification");
 
-                if (criticalCount > 0 || highCount > 0) {
-                    Map<String, String> params = new HashMap<>();
-                    params.put("criticalCount", String.valueOf(criticalCount));
-                    params.put("highCount", String.valueOf(highCount));
-                    params.put("date", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE));
+                    NotificationCreateDTO dto = NotificationCreateDTO.builder()
+                            .userId(manager.getId())
+                            .type("DAILY_SUMMARY")
+                            .category(NotificationCategory.SYSTEM)
+                            .title("Daily Summary")
+                            .message("Daily system summary for " + LocalDate.now())
+                            .priority(NotificationPriority.LOW)
+                            .build();
 
+                    createCustomNotification(dto);
+                } else {
                     createNotificationFromTemplate(
                             manager.getId(),
                             "DAILY_SUMMARY",
                             params,
-                            Map.of("action", "VIEW_ALL")
+                            null
                     );
-                    summariesSent++;
                 }
+                count++;
             } catch (Exception e) {
-                log.error("Failed to send summary to manager {}: {}", manager.getId(), e.getMessage());
+                log.error("Failed to send daily summary to manager {}: {}",
+                        manager.getUsername(), e.getMessage());
             }
         }
 
-        return summariesSent;
+        return count;
     }
 
     /**
      * Escalate critical notifications
+     * FIX: Use enum directly for role lookup
      */
-    @Transactional
     public int escalateCriticalNotifications(int hoursThreshold) {
         LocalDateTime thresholdTime = LocalDateTime.now().minusHours(hoursThreshold);
 
-        List<Notification> criticalUnread = notificationRepository
-                .findByStatusAndPriorityAndCreatedAtBefore(
-                        NotificationStatus.UNREAD,
-                        NotificationPriority.CRITICAL,
-                        thresholdTime
-                );
+        List<Notification> unescalated = notificationRepository.findUnescalatedCritical(
+                thresholdTime, NotificationPriority.CRITICAL, NotificationStatus.UNREAD);
 
         int escalated = 0;
-        for (Notification notification : criticalUnread) {
+        for (Notification notification : unescalated) {
             try {
-                // Create escalation notification for all managers
-                List<User> managers = userRepository.findByRole("HOSPITAL_MANAGER");
+                // Get all managers using enum directly
+                List<User> managers = userRepository.findByRole(UserRole.HOSPITAL_MANAGER);
+
                 for (User manager : managers) {
+                    // Don't escalate to the same user
                     if (!manager.getId().equals(notification.getUser().getId())) {
                         Map<String, String> params = new HashMap<>();
-                        params.put("originalTitle", notification.getTitle());
-                        params.put("username", notification.getUser().getUsername());
-                        params.put("hours", String.valueOf(hoursThreshold));
+                        params.put("originalUser", notification.getUser().getUsername());
+                        params.put("title", notification.getTitle());
+                        params.put("hoursOverdue", String.valueOf(hoursThreshold));
 
-                        createNotificationFromTemplate(
-                                manager.getId(),
-                                "CRITICAL_ESCALATION",
-                                params,
-                                Map.of("originalId", notification.getId())
-                        );
+                        // Check if template exists
+                        if (!templateRepository.existsByCode("ESCALATION_NOTICE")) {
+                            log.warn("ESCALATION_NOTICE template not found, creating custom notification");
+
+                            NotificationCreateDTO dto = NotificationCreateDTO.builder()
+                                    .userId(manager.getId())
+                                    .type("ESCALATION_NOTICE")
+                                    .category(NotificationCategory.SYSTEM)
+                                    .title("Critical Notification Escalation")
+                                    .message(String.format(
+                                            "Critical notification for %s has been unread for %d hours: %s",
+                                            params.get("originalUser"),
+                                            hoursThreshold,
+                                            params.get("title")
+                                    ))
+                                    .priority(NotificationPriority.CRITICAL)
+                                    .actionData(Map.of("originalNotificationId", notification.getId()))
+                                    .build();
+
+                            createCustomNotification(dto);
+                        } else {
+                            createNotificationFromTemplate(
+                                    manager.getId(),
+                                    "ESCALATION_NOTICE",
+                                    params,
+                                    Map.of("originalNotificationId", notification.getId())
+                            );
+                        }
                         escalated++;
                     }
                 }
             } catch (Exception e) {
-                log.error("Failed to escalate notification {}: {}", notification.getId(), e.getMessage());
+                log.error("Failed to escalate notification {}: {}",
+                        notification.getId(), e.getMessage());
             }
         }
 
@@ -464,232 +504,54 @@ public class NotificationService {
     /**
      * Group similar notifications
      */
-    @Transactional
     public int groupSimilarNotifications() {
-        List<User> users = userRepository.findAll();
-        int totalGrouped = 0;
-
-        for (User user : users) {
-            // Find unread notifications for this user
-            List<Notification> unreadNotifications = notificationRepository
-                    .findByUserIdAndStatus(user.getId(), NotificationStatus.UNREAD);
-
-            // Group by type and category
-            Map<String, List<Notification>> grouped = unreadNotifications.stream()
-                    .filter(n -> n.getCreatedAt().isAfter(LocalDateTime.now().minusHours(24)))
-                    .collect(Collectors.groupingBy(n -> n.getType() + "_" + n.getCategory()));
-
-            for (Map.Entry<String, List<Notification>> entry : grouped.entrySet()) {
-                if (entry.getValue().size() >= 3) { // Group if 3 or more similar
-                    try {
-                        // Create grouped notification
-                        Notification groupedNotification = Notification.builder()
-                                .user(user)
-                                .type("GROUPED_" + entry.getValue().get(0).getType())
-                                .category(entry.getValue().get(0).getCategory())
-                                .title(entry.getValue().size() + " similar notifications")
-                                .message("You have " + entry.getValue().size() + " similar " +
-                                        entry.getValue().get(0).getCategory() + " notifications")
-                                .priority(entry.getValue().get(0).getPriority())
-                                .status(NotificationStatus.UNREAD)
-                                .actionData(Map.of("groupedIds",
-                                        entry.getValue().stream()
-                                                .map(Notification::getId)
-                                                .collect(Collectors.toList())))
-                                .build();
-
-                        notificationRepository.save(groupedNotification);
-
-                        // Archive original notifications
-                        entry.getValue().forEach(n -> {
-                            n.setStatus(NotificationStatus.ARCHIVED);
-                            notificationRepository.save(n);
-                        });
-
-                        totalGrouped += entry.getValue().size();
-                    } catch (Exception e) {
-                        log.error("Failed to group notifications: {}", e.getMessage());
-                    }
-                }
-            }
-        }
-
-        return totalGrouped;
-    }
-
-    // NEW HELPER METHODS ADDED BELOW
-
-    /**
-     * Create expiry alert notification (Enhanced version)
-     * Helper method for BatchExpiryTrackingService
-     */
-    public void createExpiryAlertNotificationEnhanced(Long batchId, String productName,
-                                                      String batchNumber, int daysUntilExpiry) {
-        try {
-            Map<String, String> params = new HashMap<>();
-            params.put("productName", productName);
-            params.put("batchNumber", batchNumber);
-            params.put("days", String.valueOf(Math.abs(daysUntilExpiry)));
-
-            Map<String, Object> actionData = new HashMap<>();
-            actionData.put("batchId", batchId);
-            actionData.put("action", "VIEW_BATCH");
-
-            String templateCode;
-            if (daysUntilExpiry <= 0) {
-                templateCode = "EXPIRED_PRODUCT";
-            } else if (daysUntilExpiry <= 7) {
-                templateCode = "EXPIRY_CRITICAL";
-            } else if (daysUntilExpiry <= 15) {
-                templateCode = "EXPIRY_WARNING";
-            } else {
-                templateCode = "EXPIRY_NOTICE";
-            }
-
-            notifyUsersByRole(
-                    Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF"),
-                    templateCode,
-                    params,
-                    actionData
-            );
-
-            log.info("Created expiry notification for batch {} ({} days until expiry)",
-                    batchNumber, daysUntilExpiry);
-
-        } catch (Exception e) {
-            log.error("Failed to create expiry notification for batch {}: {}",
-                    batchNumber, e.getMessage());
-        }
+        // Implementation for grouping similar notifications
+        // This is a placeholder - implement based on your business logic
+        return 0;
     }
 
     /**
-     * Create batch notification
-     * Helper method for batch-related events
+     * Update user's unread notification count
      */
-    public void createBatchNotification(ProductBatch batch, String eventType) {
-        try {
-            Map<String, String> params = new HashMap<>();
-            params.put("batchNumber", batch.getBatchNumber());
-            params.put("productName", batch.getProduct().getName());
-
-            Map<String, Object> actionData = new HashMap<>();
-            actionData.put("batchId", batch.getId());
-            actionData.put("productId", batch.getProduct().getId());
-
-            String templateCode;
-            List<String> roles = Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF");
-
-            switch (eventType) {
-                case "CREATED":
-                    templateCode = "BATCH_CREATED";
-                    break;
-                case "DEPLETED":
-                    templateCode = "BATCH_DEPLETED";
-                    break;
-                case "EXPIRED":
-                    templateCode = "BATCH_EXPIRED";
-                    break;
-                case "EXPIRING":
-                    long daysUntilExpiry = ChronoUnit.DAYS.between(
-                            LocalDate.now(), batch.getExpiryDate());
-                    params.put("days", String.valueOf(daysUntilExpiry));
-                    templateCode = "BATCH_EXPIRING";
-                    break;
-                default:
-                    log.warn("Unknown batch event type: {}", eventType);
-                    return;
-            }
-
-            notifyUsersByRole(roles, templateCode, params, actionData);
-
-        } catch (Exception e) {
-            log.error("Failed to create batch notification: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Create stock notification
-     * Helper method for stock-related events
-     */
-    public void createStockNotification(Product product, String eventType,
-                                        Integer quantity, Integer newQuantity) {
-        try {
-            Map<String, String> params = new HashMap<>();
-            params.put("productName", product.getName());
-            params.put("quantity", String.valueOf(quantity));
-
-            Map<String, Object> actionData = new HashMap<>();
-            actionData.put("productId", product.getId());
-
-            String templateCode;
-            List<String> roles = Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF");
-
-            switch (eventType) {
-                case "LOW_STOCK":
-                    params.put("minStock", String.valueOf(product.getMinStock()));
-                    params.put("currentStock", String.valueOf(newQuantity));
-                    templateCode = "LOW_STOCK";
-                    break;
-                case "OUT_OF_STOCK":
-                    templateCode = "OUT_OF_STOCK";
-                    break;
-                case "STOCK_ADJUSTED":
-                    params.put("newQuantity", String.valueOf(newQuantity));
-                    params.put("adjustmentType", quantity > 0 ? "increased" : "decreased");
-                    templateCode = "STOCK_ADJUSTED";
-                    break;
-                case "STOCK_RECEIVED":
-                    templateCode = "STOCK_RECEIVED";
-                    break;
-                default:
-                    log.warn("Unknown stock event type: {}", eventType);
-                    return;
-            }
-
-            notifyUsersByRole(roles, templateCode, params, actionData);
-
-        } catch (Exception e) {
-            log.error("Failed to create stock notification: {}", e.getMessage());
-        }
-    }
-
-    // Helper methods
-
     private void updateUserUnreadCount(Long userId) {
-        Long unreadCount = notificationRepository.countByUserIdAndStatus(
-                userId, NotificationStatus.UNREAD);
-
-        User user = userRepository.findById(userId).orElse(null);
-        if (user != null) {
-            user.setUnreadNotifications(unreadCount.intValue());
-            user.setLastNotificationCheck(LocalDateTime.now());
-            userRepository.save(user);
+        try {
+            Long unreadCount = notificationRepository.countByUserIdAndStatus(
+                    userId, NotificationStatus.UNREAD);
+            userRepository.updateUnreadNotificationCount(userId, unreadCount.intValue());
+        } catch (Exception e) {
+            log.error("Failed to update unread count for user {}: {}", userId, e.getMessage());
         }
     }
 
+    /**
+     * Generate action URL based on template and data
+     */
     private String generateActionUrl(String templateCode, Map<String, Object> actionData) {
-        if (actionData == null || actionData.isEmpty()) {
-            return null;
-        }
+        if (actionData == null) return null;
 
-        // Generate appropriate URL based on notification type
-        if (templateCode.startsWith("QUARANTINE")) {
-            Long recordId = (Long) actionData.get("recordId");
-            return recordId != null ? "/quarantine/" + recordId : "/quarantine";
-        } else if (templateCode.startsWith("STOCK")) {
+        if (templateCode.startsWith("STOCK") || templateCode.startsWith("LOW_STOCK")) {
             Long productId = (Long) actionData.get("productId");
             return productId != null ? "/products/" + productId : "/products";
         } else if (templateCode.startsWith("EXPIRY") || templateCode.startsWith("BATCH")) {
             Long batchId = (Long) actionData.get("batchId");
             return batchId != null ? "/batch-tracking/" + batchId : "/batch-tracking";
+        } else if (templateCode.startsWith("QUARANTINE")) {
+            Long recordId = (Long) actionData.get("recordId");
+            return recordId != null ? "/quarantine/" + recordId : "/quarantine";
         } else if (templateCode.startsWith("REPORT")) {
             String reportId = (String) actionData.get("reportId");
             return reportId != null ? "/reports/" + reportId : "/reports";
+        } else if (templateCode.startsWith("USER")) {
+            Long userId = (Long) actionData.get("userId");
+            return userId != null ? "/users/" + userId : "/users";
         }
 
         return null;
     }
 
+    /**
+     * Convert Notification entity to DTO
+     */
     private NotificationDTO convertToDTO(Notification notification) {
         return NotificationDTO.builder()
                 .id(notification.getId())
@@ -707,5 +569,71 @@ public class NotificationService {
                 .readAt(notification.getReadAt())
                 .expiresAt(notification.getExpiresAt())
                 .build();
+    }
+
+    /**
+     * Helper method to determine category from template code
+     */
+    private NotificationCategory determineCategory(String templateCode) {
+        if (templateCode.contains("QUARANTINE")) return NotificationCategory.QUARANTINE;
+        if (templateCode.contains("BATCH")) return NotificationCategory.BATCH;
+        if (templateCode.contains("USER")) return NotificationCategory.USER;
+        if (templateCode.contains("STOCK")) return NotificationCategory.STOCK;
+        if (templateCode.contains("EXPIRY")) return NotificationCategory.EXPIRY;
+        return NotificationCategory.SYSTEM;
+    }
+
+    /**
+     * Helper method to generate fallback title
+     */
+    private String generateFallbackTitle(String templateCode, Map<String, String> params) {
+        switch (templateCode) {
+            case "BATCH_CREATED":
+                return "New Batch Created";
+            case "QUARANTINE_CREATED":
+                return "Item Quarantined";
+            case "USER_REGISTERED":
+                return "New User Registration";
+            default:
+                return "System Notification";
+        }
+    }
+
+    /**
+     * Helper method to generate fallback message
+     */
+    private String generateFallbackMessage(String templateCode, Map<String, String> params) {
+        StringBuilder message = new StringBuilder();
+
+        switch (templateCode) {
+            case "BATCH_CREATED":
+                message.append("New batch ");
+                message.append(params.getOrDefault("batchNumber", "N/A"));
+                message.append(" created for ");
+                message.append(params.getOrDefault("productName", "product"));
+                message.append(" with quantity ");
+                message.append(params.getOrDefault("quantity", "0"));
+                break;
+            case "QUARANTINE_CREATED":
+                message.append("Product ");
+                message.append(params.getOrDefault("productName", "N/A"));
+                message.append(" (Batch: ");
+                message.append(params.getOrDefault("batchNumber", "N/A"));
+                message.append(") has been quarantined. Reason: ");
+                message.append(params.getOrDefault("reason", "Not specified"));
+                break;
+            case "USER_REGISTERED":
+                message.append("New user ");
+                message.append(params.getOrDefault("username", "N/A"));
+                message.append(" (");
+                message.append(params.getOrDefault("role", "N/A"));
+                message.append(") has been registered");
+                break;
+            default:
+                message.append("Notification: ").append(templateCode);
+                params.forEach((k, v) -> message.append("\n").append(k).append(": ").append(v));
+        }
+
+        return message.toString();
     }
 }

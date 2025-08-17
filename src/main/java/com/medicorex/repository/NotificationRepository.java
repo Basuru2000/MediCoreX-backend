@@ -157,4 +157,27 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             @Param("title") String title,
             @Param("since") LocalDateTime since
     );
+
+    /**
+     * Find unescalated critical notifications
+     */
+    @Query("SELECT n FROM Notification n WHERE n.createdAt < :thresholdTime " +
+            "AND n.priority = :priority AND n.status = :status " +
+            "AND NOT EXISTS (SELECT 1 FROM Notification e WHERE e.type = 'ESCALATION_NOTICE' " +
+            "AND e.actionData LIKE CONCAT('%', n.id, '%'))")
+    List<Notification> findUnescalatedCritical(
+            @Param("thresholdTime") LocalDateTime thresholdTime,
+            @Param("priority") NotificationPriority priority,
+            @Param("status") NotificationStatus status
+    );
+
+    /**
+     * Delete old archived notifications
+     */
+    @Modifying
+    @Query("DELETE FROM Notification n WHERE n.createdAt < :cutoffDate AND n.status = :status")
+    int deleteByCreatedAtBeforeAndStatus(
+            @Param("cutoffDate") LocalDateTime cutoffDate,
+            @Param("status") NotificationStatus status
+    );
 }
