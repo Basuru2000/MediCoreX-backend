@@ -15,8 +15,11 @@ import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.NotificationRepository;
 import com.medicorex.repository.NotificationTemplateRepository;
 import com.medicorex.repository.UserRepository;
+import com.medicorex.service.NotificationPreferenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -40,6 +43,56 @@ public class NotificationService {
     private final NotificationRepository notificationRepository;
     private final NotificationTemplateRepository templateRepository;
     private final UserRepository userRepository;
+    private final NotificationPreferenceService preferenceService;
+
+    @Autowired
+    @Lazy // Use lazy loading to avoid circular dependency
+    private NotificationPreferenceService preferenceService2;
+
+    /**
+     * Create notification with preference checking
+     */
+    public NotificationDTO createNotification(NotificationCreateDTO createDTO) {
+        // Check preferences first (only if preferenceService is available)
+        if (preferenceService2 != null) {
+            boolean shouldSend = preferenceService2.shouldSendNotification(
+                    createDTO.getUserId(),
+                    createDTO.getCategory().toString(),
+                    createDTO.getPriority() != null ? createDTO.getPriority() : NotificationPriority.MEDIUM
+            );
+
+            if (!shouldSend) {
+                log.debug("Notification blocked by user preferences: user={}, category={}, priority={}",
+                        createDTO.getUserId(), createDTO.getCategory(), createDTO.getPriority());
+                return null;
+            }
+        }
+
+        // Existing notification creation logic
+        User user = userRepository.findById(createDTO.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", createDTO.getUserId()));
+
+        Notification notification = new Notification();
+        notification.setUser(user);
+        notification.setType(createDTO.getType());
+        notification.setCategory(createDTO.getCategory());
+        notification.setTitle(createDTO.getTitle());
+        notification.setMessage(createDTO.getMessage());
+        notification.setPriority(createDTO.getPriority() != null ?
+                createDTO.getPriority() : NotificationPriority.MEDIUM);
+        notification.setStatus(NotificationStatus.UNREAD);
+        notification.setActionUrl(createDTO.getActionUrl());
+        notification.setActionData(createDTO.getActionData());
+        notification.setExpiresAt(createDTO.getExpiresAt());
+
+        // Mark that preferences were checked (if the field exists)
+        // notification.setPreferenceChecked(true); // Uncomment if you added this field
+
+        Notification saved = notificationRepository.save(notification);
+        log.info("Created notification for user {}: {}", user.getUsername(), notification.getTitle());
+
+        return convertToDTO(saved);
+    }
 
     /**
      * Create notification from template
@@ -85,86 +138,224 @@ public class NotificationService {
     }
 
     /**
-     * Create custom notification
+     * Create custom notification with preference checking
      */
-    public NotificationDTO createCustomNotification(NotificationCreateDTO dto) {
-        User user = userRepository.findById(dto.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User", "id", dto.getUserId()));
+    public NotificationDTO createCustomNotification(NotificationCreateDTO createDTO) {
+        // Check preferences first
+        boolean shouldSend = preferenceService.shouldSendNotification(
+                createDTO.getUserId(),
+                createDTO.getCategory().toString(),
+                createDTO.getPriority() != null ? createDTO.getPriority() : NotificationPriority.MEDIUM
+        );
+
+        if (!shouldSend) {
+            log.debug("Notification blocked by user preferences: user={}, category={}, priority={}",
+                    createDTO.getUserId(), createDTO.getCategory(), createDTO.getPriority());
+            return null;
+        }
+
+        // Existing notification creation logic...
+        User user = userRepository.findById(createDTO.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", createDTO.getUserId()));
 
         Notification notification = Notification.builder()
                 .user(user)
-                .type(dto.getType())
-                .category(dto.getCategory())
-                .title(dto.getTitle())
-                .message(dto.getMessage())
-                .priority(dto.getPriority() != null ? dto.getPriority() : NotificationPriority.MEDIUM)
+                .type(createDTO.getType())
+                .category(createDTO.getCategory())
+                .title(createDTO.getTitle())
+                .message(createDTO.getMessage())
+                .priority(createDTO.getPriority() != null ? createDTO.getPriority() : NotificationPriority.MEDIUM)
                 .status(NotificationStatus.UNREAD)
-                .actionUrl(dto.getActionUrl())
-                .actionData(dto.getActionData())
+                .actionUrl(createDTO.getActionUrl())
+                .actionData(createDTO.getActionData())
                 .createdAt(LocalDateTime.now())
-                .expiresAt(dto.getExpiresAt())
+                .expiresAt(createDTO.getExpiresAt())
+                .preferenceChecked(true) // Mark that preferences were checked
                 .build();
 
         Notification saved = notificationRepository.save(notification);
-        updateUserUnreadCount(dto.getUserId());
+        updateUserUnreadCount(createDTO.getUserId());
+
+        log.info("Created notification for user {}: {}", user.getUsername(), notification.getTitle());
 
         return convertToDTO(saved);
     }
 
     /**
-     * Send notification to multiple users by role - ASYNC version
-     * This method accepts String roles and converts them internally
+     * Create notification with preference checking
+     * This method should be called instead of direct notification creation
+     */
+    public NotificationDTO createNotificationWithPreferenceCheck(NotificationCreateDTO createDTO) {
+        // Check user preferences first
+        boolean shouldSend = preferenceService.shouldSendNotification(
+                createDTO.getUserId(),
+                createDTO.getCategory().toString(),
+                createDTO.getPriority() != null ? createDTO.getPriority() : NotificationPriority.MEDIUM
+        );
+
+        if (!shouldSend) {
+            log.debug("Notification blocked by user preferences for user {}, category: {}",
+                    createDTO.getUserId(), createDTO.getCategory());
+            return null; // Or return a DTO with status BLOCKED
+        }
+
+        // If preferences allow, create the notification
+        return createCustomNotification(createDTO);
+    }
+
+    /**
+     * Modified notifyUsersByRole to check preferences
      */
     @Async
-    public void notifyUsersByRole(List<String> roleStrings, String templateCode,
-                                  Map<String, String> params, Map<String, Object> actionData) {
-        try {
-            log.info("=== Starting ASYNC notification send to roles: {} with template: {}", roleStrings, templateCode);
+    public void notifyUsersByRoleWithPreferences(List<String> roleNames, String templateCode,
+                                                 Map<String, String> params, Map<String, Object> actionData) {
+        log.debug("Sending notifications to roles: {} with template: {}", roleNames, templateCode);
 
-            // Convert string roles to enum values
-            List<User.UserRole> roleEnums = new ArrayList<>();
-            for (String roleStr : roleStrings) {
-                try {
-                    User.UserRole role = User.UserRole.valueOf(roleStr.toUpperCase().replace(" ", "_"));
-                    roleEnums.add(role);
-                } catch (IllegalArgumentException e) {
-                    log.warn("Invalid role string: {}", roleStr);
-                }
-            }
+        List<UserRole> roles = roleNames.stream()
+                .map(UserRole::valueOf)
+                .collect(Collectors.toList());
 
-            if (!roleEnums.isEmpty()) {
-                List<User> users = userRepository.findByRoleIn(roleEnums);
-                log.info("Found {} users with roles {}", users.size(), roleEnums);
+        List<User> users = userRepository.findByRoleIn(roles);
 
-                int successCount = 0;
-                int failCount = 0;
+        NotificationTemplate template = templateRepository.findByCodeAndActive(templateCode, true)
+                .orElse(null);
 
-                for (User user : users) {
-                    try {
-                        NotificationDTO notification = createNotificationFromTemplate(
-                                user.getId(),
-                                templateCode,
-                                params,
-                                actionData
-                        );
-                        log.info("Created notification {} for user: {}", notification.getId(), user.getUsername());
-                        successCount++;
-                    } catch (Exception e) {
-                        failCount++;
-                        log.error("Failed to create notification for user {} ({}): {}",
-                                user.getId(), user.getUsername(), e.getMessage());
-                    }
-                }
-
-                log.info("=== Notification send completed. Success: {}, Failed: {} for template: {}",
-                        successCount, failCount, templateCode);
-            } else {
-                log.warn("No valid roles found from: {}", roleStrings);
-            }
-
-        } catch (Exception e) {
-            log.error("=== CRITICAL ERROR in notifyUsersByRole: {}", e.getMessage(), e);
+        if (template == null) {
+            log.error("Template not found: {}", templateCode);
+            return;
         }
+
+        NotificationCategory category = determineCategory(templateCode);
+        NotificationPriority priority = template.getPriority();
+
+        for (User user : users) {
+            // Check preferences before creating notification
+            boolean shouldSend = preferenceService.shouldSendNotification(
+                    user.getId(),
+                    category.toString(),
+                    priority
+            );
+
+            if (!shouldSend) {
+                log.debug("Notification blocked by preferences for user: {}", user.getUsername());
+                continue;
+            }
+
+            // Create notification if preferences allow
+            try {
+                String title = processTemplate(template.getTitleTemplate(), params);
+                String message = processTemplate(template.getMessageTemplate(), params);
+
+                NotificationCreateDTO createDTO = NotificationCreateDTO.builder()
+                        .userId(user.getId())
+                        .type(templateCode)
+                        .category(category)
+                        .title(title)
+                        .message(message)
+                        .priority(priority)
+                        .actionUrl(generateActionUrl(templateCode, actionData))
+                        .actionData(actionData)
+                        .build();
+
+                createCustomNotification(createDTO);
+                log.debug("Notification created for user: {}", user.getUsername());
+            } catch (Exception e) {
+                log.error("Failed to create notification for user {}: {}",
+                        user.getUsername(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Update the notifyUsersByRole method to check preferences
+     */
+    @Async
+    public void notifyUsersByRole(List<String> roleNames, String templateCode,
+                                  Map<String, String> params, Map<String, Object> actionData) {
+        log.debug("Sending notifications to roles: {} with template: {}", roleNames, templateCode);
+
+        // Convert string role names to UserRole enums
+        List<UserRole> roles = roleNames.stream()
+                .map(UserRole::valueOf)
+                .collect(Collectors.toList());
+
+        List<User> users = userRepository.findByRoleIn(roles);
+
+        NotificationTemplate template = templateRepository.findByCodeAndActive(templateCode, true)
+                .orElse(null);
+
+        if (template == null) {
+            log.error("Template not found: {}", templateCode);
+            return;
+        }
+
+        NotificationCategory category = determineCategory(templateCode);
+        NotificationPriority priority = template.getPriority();
+
+        for (User user : users) {
+            // Check preferences before creating notification (if service is available)
+            if (preferenceService2 != null) {
+                boolean shouldSend = preferenceService2.shouldSendNotification(
+                        user.getId(),
+                        category.toString(),
+                        priority
+                );
+
+                if (!shouldSend) {
+                    log.debug("Notification blocked by preferences for user: {}", user.getUsername());
+                    continue;
+                }
+            }
+
+            // Create notification if preferences allow
+            try {
+                String title = processTemplate(template.getTitleTemplate(), params);
+                String message = processTemplate(template.getMessageTemplate(), params);
+
+                NotificationCreateDTO createDTO = NotificationCreateDTO.builder()
+                        .userId(user.getId())
+                        .type(templateCode)
+                        .category(category)
+                        .title(title)
+                        .message(message)
+                        .priority(priority)
+                        .actionUrl(generateActionUrl(templateCode, actionData))
+                        .actionData(actionData)
+                        .build();
+
+                // Use the base creation method without re-checking preferences
+                createNotificationInternal(createDTO);
+                log.debug("Notification created for user: {}", user.getUsername());
+            } catch (Exception e) {
+                log.error("Failed to create notification for user {}: {}",
+                        user.getUsername(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Internal method to create notification without preference checking
+     * (to avoid double-checking in notifyUsersByRole)
+     */
+    private NotificationDTO createNotificationInternal(NotificationCreateDTO createDTO) {
+        User user = userRepository.findById(createDTO.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", createDTO.getUserId()));
+
+        Notification notification = new Notification();
+        notification.setUser(user);
+        notification.setType(createDTO.getType());
+        notification.setCategory(createDTO.getCategory());
+        notification.setTitle(createDTO.getTitle());
+        notification.setMessage(createDTO.getMessage());
+        notification.setPriority(createDTO.getPriority() != null ?
+                createDTO.getPriority() : NotificationPriority.MEDIUM);
+        notification.setStatus(NotificationStatus.UNREAD);
+        notification.setActionUrl(createDTO.getActionUrl());
+        notification.setActionData(createDTO.getActionData());
+        notification.setExpiresAt(createDTO.getExpiresAt());
+
+        Notification saved = notificationRepository.save(notification);
+        return convertToDTO(saved);
     }
 
     /**
@@ -396,12 +587,12 @@ public class NotificationService {
         LocalDateTime cutoffDate = LocalDateTime.now().minusDays(daysToKeep);
         List<Notification> archivedNotifications = notificationRepository
                 .findByCreatedAtBeforeAndStatus(cutoffDate, NotificationStatus.ARCHIVED);
-        
+
         if (!archivedNotifications.isEmpty()) {
             notificationRepository.deleteAll(archivedNotifications);
             log.info("Deleted {} archived notifications older than {} days", archivedNotifications.size(), daysToKeep);
         }
-        
+
         return archivedNotifications.size();
     }
 
@@ -412,7 +603,7 @@ public class NotificationService {
         LocalDateTime now = LocalDateTime.now();
         List<Notification> expiredNotifications = notificationRepository
                 .findByExpiresAtBeforeAndStatusNot(now, NotificationStatus.ARCHIVED);
-        
+
         if (!expiredNotifications.isEmpty()) {
             for (Notification notification : expiredNotifications) {
                 Long userId = notification.getUser().getId();
@@ -421,7 +612,7 @@ public class NotificationService {
             }
             log.info("Deleted {} expired notifications", expiredNotifications.size());
         }
-        
+
         return expiredNotifications.size();
     }
 
@@ -432,7 +623,7 @@ public class NotificationService {
         LocalDateTime cutoffDate = LocalDateTime.now().minusDays(daysToKeep);
         List<Notification> oldReadNotifications = notificationRepository
                 .findByReadAtBeforeAndStatus(cutoffDate, NotificationStatus.READ);
-        
+
         if (!oldReadNotifications.isEmpty()) {
             for (Notification notification : oldReadNotifications) {
                 Long userId = notification.getUser().getId();
@@ -441,7 +632,7 @@ public class NotificationService {
             }
             log.info("Deleted {} old read notifications older than {} days", oldReadNotifications.size(), daysToKeep);
         }
-        
+
         return oldReadNotifications.size();
     }
 
@@ -637,6 +828,22 @@ public class NotificationService {
         if (templateCode.contains("STOCK")) return NotificationCategory.STOCK;
         if (templateCode.contains("EXPIRY")) return NotificationCategory.EXPIRY;
         return NotificationCategory.SYSTEM;
+    }
+
+    /**
+     * Helper method to process template strings with parameters
+     */
+    private String processTemplate(String template, Map<String, String> params) {
+        if (template == null || params == null) {
+            return template;
+        }
+
+        String result = template;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            String placeholder = "{" + entry.getKey() + "}";
+            result = result.replace(placeholder, entry.getValue());
+        }
+        return result;
     }
 
     /**
