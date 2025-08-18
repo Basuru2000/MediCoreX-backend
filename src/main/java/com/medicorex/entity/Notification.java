@@ -42,12 +42,12 @@ public class Notification {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    @Builder.Default  // FIX: Added @Builder.Default
+    @Builder.Default
     private NotificationPriority priority = NotificationPriority.MEDIUM;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    @Builder.Default  // FIX: Added @Builder.Default
+    @Builder.Default
     private NotificationStatus status = NotificationStatus.UNREAD;
 
     @Column(name = "action_url", length = 500)
@@ -58,7 +58,7 @@ public class Notification {
     private Map<String, Object> actionData;
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    @Builder.Default  // FIX: Added @Builder.Default
+    @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 
     @Column(name = "read_at")
@@ -66,6 +66,11 @@ public class Notification {
 
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
+
+    // NEW FIELD: Track if preferences were checked when creating this notification
+    @Column(name = "preference_checked")
+    @Builder.Default
+    private Boolean preferenceChecked = false;
 
     public enum NotificationCategory {
         QUARANTINE,
@@ -102,6 +107,9 @@ public class Notification {
         }
         if (priority == null) {
             priority = NotificationPriority.MEDIUM;
+        }
+        if (preferenceChecked == null) {
+            preferenceChecked = false;
         }
     }
 

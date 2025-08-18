@@ -777,9 +777,261 @@ WHERE NOT EXISTS (
 -- =====================================================
 
 -- =====================================================
--- UPCOMING CHANGES
+-- Date: 2024-02-XX (Update with actual date)
+-- Feature: 2.2 Customizable Alert Preferences (Week 5)
+-- Developer: Week 5 Implementation Phase 2.2
+-- Status: PENDING
 -- =====================================================
 
+-- Drop existing notification_preferences table if it exists (from previous partial implementation)
+DROP TABLE IF EXISTS notification_preferences;
+
+-- Enhanced Notification Preferences table with full feature set
+CREATE TABLE notification_preferences (
+                                          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                          user_id BIGINT NOT NULL UNIQUE,
+
+    -- Global notification settings
+                                          in_app_enabled BOOLEAN DEFAULT TRUE,
+                                          email_enabled BOOLEAN DEFAULT FALSE,
+                                          sms_enabled BOOLEAN DEFAULT FALSE,
+
+    -- Category-specific preferences (stored as JSON)
+    -- Format: {"STOCK": true, "EXPIRY": true, "BATCH": true, ...}
+                                          category_preferences JSON,
+
+    -- Priority threshold (only notify if priority >= this level)
+    -- Values: LOW, MEDIUM, HIGH, CRITICAL
+                                          priority_threshold VARCHAR(20) DEFAULT 'LOW',
+
+    -- Quiet hours configuration (stored as JSON)
+    -- Format: {"enabled": true, "startTime": "22:00", "endTime": "07:00", "timezone": "UTC"}
+                                          quiet_hours JSON,
+
+    -- Notification frequency settings (stored as JSON)
+    -- Format: {"STOCK": "IMMEDIATE", "EXPIRY": "DAILY_DIGEST", ...}
+                                          frequency_settings JSON,
+
+    -- Daily digest settings
+                                          digest_enabled BOOLEAN DEFAULT FALSE,
+                                          digest_time TIME DEFAULT '09:00:00',
+                                          last_digest_sent TIMESTAMP NULL,
+
+    -- Escalation preferences
+                                          escalation_enabled BOOLEAN DEFAULT TRUE,
+                                          escalation_contact VARCHAR(255),
+
+    -- Sound/Visual preferences
+                                          sound_enabled BOOLEAN DEFAULT TRUE,
+                                          desktop_notifications BOOLEAN DEFAULT TRUE,
+
+    -- Metadata
+                                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                          created_by VARCHAR(100),
+                                          updated_by VARCHAR(100),
+
+                                          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                                          INDEX idx_user_preferences (user_id),
+                                          INDEX idx_digest_settings (digest_enabled, digest_time)
+);
+
+-- Initialize default preferences for existing users
+INSERT INTO notification_preferences (
+    user_id,
+    in_app_enabled,
+    email_enabled,
+    priority_threshold,
+    category_preferences,
+    frequency_settings,
+    quiet_hours,
+    sound_enabled,
+    desktop_notifications,
+    created_by
+)
+SELECT
+    u.id,
+    TRUE, -- in_app_enabled
+    FALSE, -- email_enabled
+    CASE
+        WHEN u.role = 'HOSPITAL_MANAGER' THEN 'LOW'
+        WHEN u.role = 'PHARMACY_STAFF' THEN 'MEDIUM'
+        ELSE 'HIGH'
+        END, -- priority_threshold based on role
+    JSON_OBJECT(
+            'STOCK', TRUE,
+            'EXPIRY', TRUE,
+            'BATCH', TRUE,
+            'QUARANTINE', TRUE,
+            'USER', TRUE,
+            'SYSTEM', TRUE,
+            'APPROVAL', TRUE,
+            'REPORT', TRUE,
+            'PROCUREMENT', TRUE
+    ), -- all categories enabled by default
+    JSON_OBJECT(
+            'STOCK', 'IMMEDIATE',
+            'EXPIRY', 'IMMEDIATE',
+            'BATCH', 'IMMEDIATE',
+            'QUARANTINE', 'IMMEDIATE',
+            'USER', 'IMMEDIATE',
+            'SYSTEM', 'IMMEDIATE',
+            'APPROVAL', 'IMMEDIATE',
+            'REPORT', 'DAILY_DIGEST',
+            'PROCUREMENT', 'IMMEDIATE'
+    ), -- frequency settings
+    JSON_OBJECT(
+            'enabled', FALSE,
+            'startTime', '22:00',
+            'endTime', '07:00',
+            'timezone', 'UTC'
+    ), -- quiet hours disabled by default
+    TRUE, -- sound_enabled
+    TRUE, -- desktop_notifications
+    'SYSTEM' -- created_by
+FROM users u
+WHERE NOT EXISTS (
+    SELECT 1 FROM notification_preferences np WHERE np.user_id = u.id
+);
+
+-- Add preference check tracking to notifications table
+ALTER TABLE notifications
+    ADD COLUMN preference_checked BOOLEAN DEFAULT FALSE AFTER status,
+    ADD COLUMN bypassed_quiet_hours BOOLEAN DEFAULT FALSE AFTER preference_checked,
+    ADD INDEX idx_preference_check (preference_checked);
+
+-- Create audit log for preference changes
+CREATE TABLE IF NOT EXISTS notification_preference_audit (
+                                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                             user_id BIGINT NOT NULL,
+                                                             changed_by BIGINT NOT NULL,
+                                                             change_type VARCHAR(50) NOT NULL,
+                                                             old_value JSON,
+                                                             new_value JSON,
+                                                             change_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                                                             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                                                             FOREIGN KEY (changed_by) REFERENCES users(id),
+                                                             INDEX idx_audit_user (user_id),
+                                                             INDEX idx_audit_timestamp (change_timestamp)
+);
+
+-- =====================================================
+-- Stored Procedure for checking if notification should be sent
+-- =====================================================
+DELIMITER $$
+
+CREATE PROCEDURE ShouldSendNotification(
+    IN p_user_id BIGINT,
+    IN p_category VARCHAR(50),
+    IN p_priority VARCHAR(20),
+    IN p_check_time TIMESTAMP,
+    OUT p_should_send BOOLEAN,
+    OUT p_reason VARCHAR(255)
+)
+proc_main: BEGIN  -- Added label here
+    DECLARE v_in_app_enabled BOOLEAN DEFAULT FALSE;
+    DECLARE v_category_enabled BOOLEAN DEFAULT FALSE;
+    DECLARE v_priority_threshold VARCHAR(20);
+    DECLARE v_quiet_hours JSON;
+    DECLARE v_quiet_enabled BOOLEAN DEFAULT FALSE;
+    DECLARE v_quiet_start TIME;
+    DECLARE v_quiet_end TIME;
+    DECLARE v_current_time TIME;
+    DECLARE v_priority_level INT;
+    DECLARE v_threshold_level INT;
+
+    -- Get user preferences
+    SELECT
+        in_app_enabled,
+        priority_threshold,
+        quiet_hours,
+        JSON_EXTRACT(category_preferences, CONCAT('$.', p_category))
+    INTO
+        v_in_app_enabled,
+        v_priority_threshold,
+        v_quiet_hours,
+        v_category_enabled
+    FROM notification_preferences
+    WHERE user_id = p_user_id;
+
+    -- Check if notifications are enabled
+    IF NOT v_in_app_enabled THEN
+        SET p_should_send = FALSE;
+        SET p_reason = 'In-app notifications disabled';
+        LEAVE proc_main;  -- Now references the label
+    END IF;
+
+    -- Check if category is enabled
+    IF v_category_enabled IS NULL OR v_category_enabled = FALSE THEN
+        SET p_should_send = FALSE;
+        SET p_reason = CONCAT('Category ', p_category, ' disabled');
+        LEAVE proc_main;  -- Now references the label
+    END IF;
+
+    -- Check priority threshold
+    SET v_priority_level = CASE p_priority
+                               WHEN 'CRITICAL' THEN 4
+                               WHEN 'HIGH' THEN 3
+                               WHEN 'MEDIUM' THEN 2
+                               WHEN 'LOW' THEN 1
+                               ELSE 0
+        END;
+
+    SET v_threshold_level = CASE v_priority_threshold
+                                WHEN 'CRITICAL' THEN 4
+                                WHEN 'HIGH' THEN 3
+                                WHEN 'MEDIUM' THEN 2
+                                WHEN 'LOW' THEN 1
+                                ELSE 0
+        END;
+
+    IF v_priority_level < v_threshold_level THEN
+        SET p_should_send = FALSE;
+        SET p_reason = CONCAT('Priority ', p_priority, ' below threshold ', v_priority_threshold);
+        LEAVE proc_main;  -- Now references the label
+    END IF;
+
+    -- Check quiet hours (skip for CRITICAL priority)
+    IF p_priority != 'CRITICAL' AND v_quiet_hours IS NOT NULL THEN
+        SET v_quiet_enabled = JSON_EXTRACT(v_quiet_hours, '$.enabled');
+
+        IF v_quiet_enabled = TRUE THEN
+            SET v_quiet_start = TIME(JSON_UNQUOTE(JSON_EXTRACT(v_quiet_hours, '$.startTime')));
+            SET v_quiet_end = TIME(JSON_UNQUOTE(JSON_EXTRACT(v_quiet_hours, '$.endTime')));
+            SET v_current_time = TIME(p_check_time);
+
+            -- Handle overnight quiet hours
+            IF v_quiet_start > v_quiet_end THEN
+                IF v_current_time >= v_quiet_start OR v_current_time <= v_quiet_end THEN
+                    SET p_should_send = FALSE;
+                    SET p_reason = 'Within quiet hours';
+                    LEAVE proc_main;  -- Now references the label
+                END IF;
+            ELSE
+                IF v_current_time >= v_quiet_start AND v_current_time <= v_quiet_end THEN
+                    SET p_should_send = FALSE;
+                    SET p_reason = 'Within quiet hours';
+                    LEAVE proc_main;  -- Now references the label
+                END IF;
+            END IF;
+        END IF;
+    END IF;
+
+    -- All checks passed
+    SET p_should_send = TRUE;
+    SET p_reason = 'All preference checks passed';
+
+END proc_main$$  -- Close the labeled block
+
+DELIMITER ;
+
+-- =====================================================
+-- END OF NOTIFICATION PREFERENCES SCHEMA CHANGES
+-- =====================================================
+-- =====================================================
+-- UPCOMING CHANGES
+-- =====================================================
 
 -- =====================================================
 -- HOW TO USE THIS FILE

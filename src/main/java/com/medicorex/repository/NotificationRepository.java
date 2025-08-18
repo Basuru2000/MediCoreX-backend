@@ -131,6 +131,9 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     // Count methods for summaries
     Long countByUserIdAndStatusAndPriority(Long userId, NotificationStatus status, NotificationPriority priority);
 
+    // Count by user, status, and category
+    Long countByUserIdAndStatusAndCategory(Long userId, NotificationStatus status, NotificationCategory category);
+
     // Find for escalation
     List<Notification> findByStatusAndPriorityAndCreatedAtBefore(
             NotificationStatus status,

@@ -219,19 +219,24 @@ public class NotificationController {
 
     /**
      * Helper method to get current user ID
-     * FIXED: Get actual user ID from authentication
+     * UPDATED: Throws exceptions instead of returning null
      */
     private Long getCurrentUserId(Authentication authentication) {
-        if (authentication != null && authentication.isAuthenticated()) {
-            String username = authentication.getName();
-            try {
-                User user = userRepository.findByUsername(username).orElse(null);
-                return user != null ? user.getId() : null;
-            } catch (Exception e) {
-                log.error("Failed to get user ID for username: {}", username, e);
-                return null;
-            }
+        if (authentication == null) {
+            throw new IllegalStateException("No authentication found");
         }
-        return null;
+
+        final String username;
+        if (authentication.getPrincipal() instanceof UserDetails) {
+            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+            username = userDetails.getUsername();
+        } else {
+            username = authentication.getName();
+        }
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalStateException("User not found: " + username));
+
+        return user.getId();
     }
 }
