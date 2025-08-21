@@ -30,6 +30,7 @@ public class ExpiryAlertConfigCreateDTO {
     @Size(max = 1000, message = "Description must not exceed 1000 characters")
     private String description;
 
+    @Builder.Default
     private Boolean active = true;
 
     @NotEmpty(message = "At least one role must be selected")
