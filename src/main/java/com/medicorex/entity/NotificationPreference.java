@@ -32,12 +32,15 @@ public class NotificationPreference {
 
     // Global notification settings
     @Column(name = "in_app_enabled")
+    @Builder.Default
     private Boolean inAppEnabled = true;
 
     @Column(name = "email_enabled")
+    @Builder.Default
     private Boolean emailEnabled = false;
 
     @Column(name = "sms_enabled")
+    @Builder.Default
     private Boolean smsEnabled = false;
 
     // Category-specific preferences
@@ -48,6 +51,7 @@ public class NotificationPreference {
     // Priority threshold
     @Column(name = "priority_threshold")
     @Enumerated(EnumType.STRING)
+    @Builder.Default
     private Notification.NotificationPriority priorityThreshold = Notification.NotificationPriority.LOW;
 
     // Quiet hours configuration
@@ -62,9 +66,11 @@ public class NotificationPreference {
 
     // Daily digest settings
     @Column(name = "digest_enabled")
+    @Builder.Default
     private Boolean digestEnabled = false;
 
     @Column(name = "digest_time")
+    @Builder.Default
     private LocalTime digestTime = LocalTime.of(9, 0);
 
     @Column(name = "last_digest_sent")
@@ -72,6 +78,7 @@ public class NotificationPreference {
 
     // Escalation preferences
     @Column(name = "escalation_enabled")
+    @Builder.Default
     private Boolean escalationEnabled = true;
 
     @Column(name = "escalation_contact")
@@ -79,9 +86,11 @@ public class NotificationPreference {
 
     // Sound/Visual preferences
     @Column(name = "sound_enabled")
+    @Builder.Default
     private Boolean soundEnabled = true;
 
     @Column(name = "desktop_notifications")
+    @Builder.Default
     private Boolean desktopNotifications = true;
 
     // Metadata
@@ -114,9 +123,13 @@ public class NotificationPreference {
     @AllArgsConstructor
     @Builder
     public static class QuietHours {
+        @Builder.Default
         private Boolean enabled = false;
+        @Builder.Default
         private String startTime = "22:00"; // HH:mm format
+        @Builder.Default
         private String endTime = "07:00";   // HH:mm format
+        @Builder.Default
         private String timezone = "UTC";
     }
 

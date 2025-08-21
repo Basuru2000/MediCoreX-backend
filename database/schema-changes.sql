@@ -1029,6 +1029,200 @@ DELIMITER ;
 -- =====================================================
 -- END OF NOTIFICATION PREFERENCES SCHEMA CHANGES
 -- =====================================================
+
+
+-- =====================================================
+-- Phase 3.1: Critical Alerts Summary Widget
+-- Date: Current Implementation
+-- Purpose: Optimize database for dashboard queries
+-- =====================================================
+
+-- Add indexes for performance optimization on product_batches
+CREATE INDEX idx_batch_expiry_status
+    ON product_batches(expiry_date, status);
+
+CREATE INDEX idx_batch_product_expiry
+    ON product_batches(product_id, expiry_date);
+
+CREATE INDEX idx_batch_status_quantity
+    ON product_batches(status, quantity);
+
+-- Add indexes for expiry alerts
+CREATE INDEX idx_expiry_alert_status_severity
+    ON expiry_alerts(status, config_id);
+
+CREATE INDEX idx_expiry_alert_date_status
+    ON expiry_alerts(alert_date, status);
+
+-- Add indexes for quarantine records
+CREATE INDEX idx_quarantine_status_date
+    ON quarantine_records(status, quarantine_date);
+
+-- Create materialized view for dashboard summary (MySQL doesn't support materialized views, so we'll use a regular view)
+CREATE OR REPLACE VIEW expiry_dashboard_summary AS
+SELECT
+    -- Expired items
+    (SELECT COUNT(*)
+     FROM product_batches
+     WHERE status = 'ACTIVE'
+       AND expiry_date < CURDATE()) AS expired_count,
+
+    -- Expiring today
+    (SELECT COUNT(*)
+     FROM product_batches
+     WHERE status = 'ACTIVE'
+       AND expiry_date = CURDATE()) AS expiring_today_count,
+
+    -- Expiring this week
+    (SELECT COUNT(*)
+     FROM product_batches
+     WHERE status = 'ACTIVE'
+       AND expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)) AS expiring_week_count,
+
+    -- Expiring this month
+    (SELECT COUNT(*)
+     FROM product_batches
+     WHERE status = 'ACTIVE'
+       AND expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)) AS expiring_month_count,
+
+    -- Pending alerts
+    (SELECT COUNT(*)
+     FROM expiry_alerts
+     WHERE status = 'PENDING') AS pending_alerts_count,
+
+    -- Quarantined items
+    (SELECT COUNT(*)
+     FROM quarantine_records
+     WHERE status IN ('PENDING_REVIEW', 'UNDER_REVIEW')) AS quarantined_count,
+
+    -- Last check time
+    (SELECT MAX(start_time)
+     FROM expiry_check_logs
+     WHERE status = 'COMPLETED') AS last_check_time;
+
+-- Create summary table for caching dashboard data (optional, for performance)
+CREATE TABLE IF NOT EXISTS expiry_summary_cache (
+                                                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                    summary_date DATE NOT NULL UNIQUE,
+                                                    expired_count BIGINT DEFAULT 0,
+                                                    expiring_today_count BIGINT DEFAULT 0,
+                                                    expiring_week_count BIGINT DEFAULT 0,
+                                                    expiring_month_count BIGINT DEFAULT 0,
+                                                    pending_alerts_count BIGINT DEFAULT 0,
+                                                    quarantined_count BIGINT DEFAULT 0,
+                                                    total_value_at_risk DECIMAL(15,2) DEFAULT 0,
+                                                    expired_value DECIMAL(15,2) DEFAULT 0,
+                                                    last_update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                                    INDEX idx_summary_date (summary_date)
+);
+
+-- Stored procedure to refresh summary cache
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS RefreshExpirySummaryCache$$
+
+CREATE PROCEDURE RefreshExpirySummaryCache()
+BEGIN
+    DECLARE v_expired_count BIGINT;
+    DECLARE v_expiring_today BIGINT;
+    DECLARE v_expiring_week BIGINT;
+    DECLARE v_expiring_month BIGINT;
+    DECLARE v_pending_alerts BIGINT;
+    DECLARE v_quarantined BIGINT;
+    DECLARE v_value_at_risk DECIMAL(15,2);
+    DECLARE v_expired_value DECIMAL(15,2);
+
+    -- Calculate counts
+    SELECT COUNT(*) INTO v_expired_count
+    FROM product_batches pb
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date < CURDATE();
+
+    SELECT COUNT(*) INTO v_expiring_today
+    FROM product_batches pb
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date = CURDATE();
+
+    SELECT COUNT(*) INTO v_expiring_week
+    FROM product_batches pb
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY);
+
+    SELECT COUNT(*) INTO v_expiring_month
+    FROM product_batches pb
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+
+    SELECT COUNT(*) INTO v_pending_alerts
+    FROM expiry_alerts ea
+    WHERE ea.status = 'PENDING';
+
+    SELECT COUNT(*) INTO v_quarantined
+    FROM quarantine_records qr
+    WHERE qr.status IN ('PENDING_REVIEW', 'UNDER_REVIEW');
+
+    -- Calculate values
+    SELECT COALESCE(SUM(pb.quantity * p.unit_price), 0) INTO v_value_at_risk
+    FROM product_batches pb
+             JOIN products p ON pb.product_id = p.id
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+
+    SELECT COALESCE(SUM(pb.quantity * p.unit_price), 0) INTO v_expired_value
+    FROM product_batches pb
+             JOIN products p ON pb.product_id = p.id
+    WHERE pb.status = 'ACTIVE'
+      AND pb.expiry_date < CURDATE();
+
+    -- Insert or update cache
+    INSERT INTO expiry_summary_cache (
+        summary_date,
+        expired_count,
+        expiring_today_count,
+        expiring_week_count,
+        expiring_month_count,
+        pending_alerts_count,
+        quarantined_count,
+        total_value_at_risk,
+        expired_value
+    ) VALUES (
+                 CURDATE(),
+                 v_expired_count,
+                 v_expiring_today,
+                 v_expiring_week,
+                 v_expiring_month,
+                 v_pending_alerts,
+                 v_quarantined,
+                 v_value_at_risk,
+                 v_expired_value
+             )
+    ON DUPLICATE KEY UPDATE
+                         expired_count = VALUES(expired_count),
+                         expiring_today_count = VALUES(expiring_today_count),
+                         expiring_week_count = VALUES(expiring_week_count),
+                         expiring_month_count = VALUES(expiring_month_count),
+                         pending_alerts_count = VALUES(pending_alerts_count),
+                         quarantined_count = VALUES(quarantined_count),
+                         total_value_at_risk = VALUES(total_value_at_risk),
+                         expired_value = VALUES(expired_value),
+                         last_update_time = CURRENT_TIMESTAMP;
+END$$
+
+DELIMITER ;
+
+-- Schedule the cache refresh (if using MySQL events)
+-- Note: Ensure event scheduler is enabled: SET GLOBAL event_scheduler = ON;
+CREATE EVENT IF NOT EXISTS refresh_expiry_summary_event
+    ON SCHEDULE EVERY 1 HOUR
+    DO CALL RefreshExpirySummaryCache();
+
+-- Initial data population
+CALL RefreshExpirySummaryCache();
+
+-- =====================================================
+-- End of Phase 3.1 Schema Changes
+-- =====================================================
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
