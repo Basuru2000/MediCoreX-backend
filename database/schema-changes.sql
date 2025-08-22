@@ -1223,6 +1223,120 @@ CALL RefreshExpirySummaryCache();
 -- =====================================================
 -- End of Phase 3.1 Schema Changes
 -- =====================================================
+
+-- =====================================================
+-- Date: 2024-12-XX (Update with actual date)
+-- Feature: 3.2 Expiry Trends Analysis (Week 5)
+-- Developer: Week 5 Implementation
+-- Status: APPLIED ✓
+-- =====================================================
+
+-- Table to store daily expiry trend snapshots
+CREATE TABLE IF NOT EXISTS expiry_trend_snapshots (
+                                                      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                      snapshot_date DATE NOT NULL,
+                                                      total_products INT NOT NULL DEFAULT 0,
+                                                      expired_count INT NOT NULL DEFAULT 0,
+                                                      expiring_7_days INT NOT NULL DEFAULT 0,
+                                                      expiring_30_days INT NOT NULL DEFAULT 0,
+                                                      expiring_60_days INT NOT NULL DEFAULT 0,
+                                                      expiring_90_days INT NOT NULL DEFAULT 0,
+                                                      expired_value DECIMAL(15,2) DEFAULT 0,
+                                                      expiring_7_days_value DECIMAL(15,2) DEFAULT 0,
+                                                      expiring_30_days_value DECIMAL(15,2) DEFAULT 0,
+                                                      avg_days_to_expiry DECIMAL(10,2),
+                                                      critical_category_id BIGINT,
+                                                      critical_category_name VARCHAR(100),
+                                                      critical_category_count INT,
+                                                      trend_direction ENUM('IMPROVING', 'STABLE', 'WORSENING') DEFAULT 'STABLE',
+                                                      trend_percentage DECIMAL(5,2),
+                                                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                                                      INDEX idx_snapshot_date (snapshot_date),
+                                                      INDEX idx_trend_direction (trend_direction),
+                                                      UNIQUE KEY unique_snapshot_date (snapshot_date)
+);
+
+-- Table for predictive analysis data
+CREATE TABLE IF NOT EXISTS expiry_predictions (
+                                                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                  prediction_date DATE NOT NULL,
+                                                  target_date DATE NOT NULL,
+                                                  predicted_expiry_count INT NOT NULL,
+                                                  confidence_level DECIMAL(5,2),
+                                                  algorithm_used VARCHAR(50),
+                                                  actual_count INT,
+                                                  accuracy_percentage DECIMAL(5,2),
+                                                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                  updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
+
+                                                  INDEX idx_prediction_date (prediction_date),
+                                                  INDEX idx_target_date (target_date),
+                                                  UNIQUE KEY unique_prediction (prediction_date, target_date)
+);
+
+-- Historical trend aggregation view
+CREATE OR REPLACE VIEW expiry_trend_summary AS
+SELECT
+    DATE_FORMAT(snapshot_date, '%Y-%m') as month,
+    AVG(expired_count) as avg_expired,
+    AVG(expiring_30_days) as avg_expiring_30,
+    SUM(expired_value) as total_expired_value,
+    COUNT(*) as data_points
+FROM expiry_trend_snapshots
+GROUP BY DATE_FORMAT(snapshot_date, '%Y-%m');
+
+-- Stored procedure to calculate trend data
+DELIMITER $$
+
+CREATE PROCEDURE CalculateExpiryTrends(IN days_back INT)
+BEGIN
+    DECLARE v_trend_direction VARCHAR(20);
+    DECLARE v_trend_percentage DECIMAL(5,2);
+    DECLARE v_current_expired INT;
+    DECLARE v_previous_expired INT;
+
+    -- Get current expired count
+    SELECT COUNT(*) INTO v_current_expired
+    FROM product_batches
+    WHERE status = 'ACTIVE' AND expiry_date < CURDATE();
+
+    -- Get previous period expired count
+    SELECT COALESCE(AVG(expired_count), 0) INTO v_previous_expired
+    FROM expiry_trend_snapshots
+    WHERE snapshot_date BETWEEN DATE_SUB(CURDATE(), INTERVAL days_back DAY)
+              AND DATE_SUB(CURDATE(), INTERVAL 1 DAY);
+
+    -- Calculate trend
+    IF v_previous_expired = 0 THEN
+        SET v_trend_percentage = 0;
+        SET v_trend_direction = 'STABLE';
+    ELSE
+        SET v_trend_percentage = ((v_current_expired - v_previous_expired) / v_previous_expired) * 100;
+
+        IF v_trend_percentage > 10 THEN
+            SET v_trend_direction = 'WORSENING';
+        ELSEIF v_trend_percentage < -10 THEN
+            SET v_trend_direction = 'IMPROVING';
+        ELSE
+            SET v_trend_direction = 'STABLE';
+        END IF;
+    END IF;
+
+    -- Return results
+    SELECT v_trend_direction as trend_direction,
+           v_trend_percentage as trend_percentage,
+           v_current_expired as current_count,
+           v_previous_expired as previous_avg;
+END$$
+
+DELIMITER ;
+
+
+
+
+
+
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
