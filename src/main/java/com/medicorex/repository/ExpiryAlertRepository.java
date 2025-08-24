@@ -50,4 +50,10 @@ public interface ExpiryAlertRepository extends JpaRepository<ExpiryAlert, Long> 
     // Get pending alerts for a batch
     @Query("SELECT a FROM ExpiryAlert a WHERE a.batch.id = :batchId AND a.status = 'PENDING'")
     List<ExpiryAlert> findPendingAlertsByBatchId(@Param("batchId") Long batchId);
+
+    // Add this method to existing repository
+    @Query("SELECT a FROM ExpiryAlert a WHERE a.expiryDate BETWEEN :startDate AND :endDate " +
+            "ORDER BY a.expiryDate, a.config.severity")
+    List<ExpiryAlert> findByExpiryDateBetween(@Param("startDate") LocalDate startDate,
+                                              @Param("endDate") LocalDate endDate);
 }

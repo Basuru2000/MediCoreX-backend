@@ -44,11 +44,19 @@ public interface ProductBatchRepository extends JpaRepository<ProductBatch, Long
     // Count batches by status
     Long countByStatus(BatchStatus status);
 
-    // Find batches for expiry monitoring
+    // Find batches for expiry monitoring (existing method unchanged)
     @Query("SELECT b FROM ProductBatch b WHERE b.status = 'ACTIVE' " +
             "AND b.expiryDate BETWEEN :startDate AND :endDate " +
             "ORDER BY b.expiryDate ASC")
     List<ProductBatch> findBatchesExpiringBetween(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    // NEW: Find batches for calendar functionality including quarantined
+    @Query("SELECT b FROM ProductBatch b WHERE b.expiryDate BETWEEN :startDate AND :endDate " +
+            "AND b.status IN ('ACTIVE', 'QUARANTINED') ORDER BY b.expiryDate")
+    List<ProductBatch> findBatchesExpiringBetweenIncludingQuarantined(
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
