@@ -1332,9 +1332,161 @@ END$$
 
 DELIMITER ;
 
+-- =====================================================
+-- Date: Current Implementation Date
+-- Feature: 3.3 Expiry Calendar Widget (Week 5)
+-- Developer: Week 5 Implementation Phase 3.3
+-- Status: APPLIED ✓
+-- =====================================================
 
+-- Add calendar-specific indexes for performance
+-- Note: MySQL doesn't support filtered indexes, so we create regular indexes
+CREATE INDEX idx_batch_expiry_calendar
+    ON product_batches(expiry_date, status, quantity);
 
+CREATE INDEX idx_alert_calendar
+    ON expiry_alerts(expiry_date, status, alert_date);
 
+-- Create materialized view for calendar data (MySQL alternative using table)
+DROP TABLE IF EXISTS expiry_calendar_cache;
+CREATE TABLE expiry_calendar_cache (
+                                       id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                       event_date DATE NOT NULL,
+                                       event_type ENUM('BATCH_EXPIRY', 'PRODUCT_EXPIRY', 'ALERT', 'QUARANTINE') NOT NULL,
+                                       severity ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') NOT NULL,
+                                       item_count INT NOT NULL DEFAULT 0,
+                                       total_quantity INT NOT NULL DEFAULT 0,
+                                       total_value DECIMAL(10,2) DEFAULT 0,
+                                       details JSON,
+                                       last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                       INDEX idx_calendar_date (event_date),
+    -- Create separate columns for indexing instead of functional index
+                                       event_year INT GENERATED ALWAYS AS (YEAR(event_date)) STORED,
+                                       event_month INT GENERATED ALWAYS AS (MONTH(event_date)) STORED,
+                                       INDEX idx_calendar_month (event_year, event_month),
+                                       UNIQUE KEY unique_date_type (event_date, event_type)
+);
+
+-- Stored procedure to refresh calendar cache (FIXED for ONLY_FULL_GROUP_BY)
+-- Fixed stored procedure that doesn't insert into generated columns
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS RefreshExpiryCalendarCache$$
+CREATE PROCEDURE RefreshExpiryCalendarCache(
+    IN p_start_date DATE,
+    IN p_end_date DATE
+)
+BEGIN
+    DECLARE v_current_date DATE;
+
+    -- Temporarily change SQL mode to avoid GROUP BY issues
+    SET @original_sql_mode = @@sql_mode;
+    SET sql_mode = (SELECT REPLACE(@@sql_mode, 'ONLY_FULL_GROUP_BY', ''));
+
+    -- Clear existing cache for date range
+    DELETE FROM expiry_calendar_cache
+    WHERE event_date BETWEEN p_start_date AND p_end_date;
+
+    -- Insert batch expiry events (REMOVED event_year and event_month from INSERT)
+    INSERT INTO expiry_calendar_cache (
+        event_date,
+        event_type,
+        severity,
+        item_count,
+        total_quantity,
+        total_value,
+        details
+    )
+    SELECT
+        pb.expiry_date,
+        'BATCH_EXPIRY',
+        CASE
+            WHEN MIN(DATEDIFF(pb.expiry_date, CURDATE())) <= 7 THEN 'CRITICAL'
+            WHEN MIN(DATEDIFF(pb.expiry_date, CURDATE())) <= 30 THEN 'HIGH'
+            WHEN MIN(DATEDIFF(pb.expiry_date, CURDATE())) <= 60 THEN 'MEDIUM'
+            ELSE 'LOW'
+            END,
+        COUNT(*),
+        SUM(pb.quantity),
+        SUM(pb.quantity * COALESCE(pb.cost_per_unit, p.unit_price)),
+        JSON_OBJECT(
+                'batches', JSON_ARRAYAGG(
+                JSON_OBJECT(
+                        'batchId', pb.id,
+                        'batchNumber', pb.batch_number,
+                        'productName', p.name,
+                        'quantity', pb.quantity
+                )
+                           )
+        )
+    FROM product_batches pb
+             JOIN products p ON pb.product_id = p.id
+    WHERE pb.expiry_date BETWEEN p_start_date AND p_end_date
+      AND pb.status IN ('ACTIVE', 'QUARANTINED')
+    GROUP BY pb.expiry_date;
+
+    -- Insert alert events (REMOVED event_year and event_month from INSERT)
+    INSERT INTO expiry_calendar_cache (
+        event_date,
+        event_type,
+        severity,
+        item_count,
+        total_quantity,
+        total_value,
+        details
+    )
+    SELECT
+        ea.alert_date,
+        'ALERT',
+        CASE
+            WHEN MAX(CASE WHEN eac.severity = 'CRITICAL' THEN 1 ELSE 0 END) = 1 THEN 'CRITICAL'
+            WHEN MAX(CASE WHEN eac.severity = 'WARNING' THEN 1 ELSE 0 END) = 1 THEN 'HIGH'
+            ELSE 'MEDIUM'
+            END,
+        COUNT(*),
+        SUM(ea.quantity_affected),
+        0,
+        JSON_OBJECT(
+                'alerts', JSON_ARRAYAGG(
+                JSON_OBJECT(
+                        'alertId', ea.id,
+                        'productName', p.name,
+                        'severity', eac.severity
+                )
+                          )
+        )
+    FROM expiry_alerts ea
+             JOIN products p ON ea.product_id = p.id
+             JOIN expiry_alert_configs eac ON ea.config_id = eac.id
+    WHERE ea.alert_date BETWEEN p_start_date AND p_end_date
+      AND ea.status IN ('PENDING', 'SENT')
+    GROUP BY ea.alert_date;
+
+    -- Restore original SQL mode
+    SET sql_mode = @original_sql_mode;
+
+END$$
+
+DELIMITER ;
+
+-- Create event for automatic cache refresh
+-- First check if event scheduler is enabled
+-- SELECT @@event_scheduler;
+-- If not enabled, enable it: SET GLOBAL event_scheduler = ON;
+
+DROP EVENT IF EXISTS refresh_calendar_cache_event;
+CREATE EVENT refresh_calendar_cache_event
+    ON SCHEDULE EVERY 1 HOUR
+    DO CALL RefreshExpiryCalendarCache(
+        CURDATE(),
+        DATE_ADD(CURDATE(), INTERVAL 90 DAY)
+            );
+
+-- Initial cache population
+CALL RefreshExpiryCalendarCache(
+        CURDATE(),
+        DATE_ADD(CURDATE(), INTERVAL 90 DAY)
+     );
 
 
 -- =====================================================
