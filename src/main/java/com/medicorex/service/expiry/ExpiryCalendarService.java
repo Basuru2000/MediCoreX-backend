@@ -185,7 +185,7 @@ public class ExpiryCalendarService {
                 .value(value)
                 .category(product.getCategory() != null ? product.getCategory().getName() : "Uncategorized")
                 .severity(severity.toString())
-                .actionUrl("/batch-tracking/" + batch.getId())
+                .actionUrl("/batch-tracking")
                 .build();
 
         return ExpiryCalendarEventDTO.builder()
@@ -202,7 +202,7 @@ public class ExpiryCalendarService {
                 .color(color)
                 .icon("inventory")
                 .details(Collections.singletonList(detail))
-                .actionUrl("/batch-tracking/" + batch.getId())
+                .actionUrl("/batch-tracking")
                 .isToday(batch.getExpiryDate().equals(today))
                 .isPast(batch.getExpiryDate().isBefore(today))
                 .daysUntil((int) daysUntil)
@@ -243,7 +243,7 @@ public class ExpiryCalendarService {
                 .quantity(alert.getQuantityAffected())
                 .category(config.getTierName())
                 .severity(severity.toString())
-                .actionUrl("/expiry-monitoring/alerts/" + alert.getId())
+                .actionUrl("/expiry-monitoring")
                 .build();
 
         return ExpiryCalendarEventDTO.builder()
@@ -258,7 +258,7 @@ public class ExpiryCalendarService {
                 .color(color)
                 .icon("warning")
                 .details(Collections.singletonList(detail))
-                .actionUrl("/expiry-monitoring/alerts/" + alert.getId())
+                .actionUrl("/expiry-monitoring")
                 .isToday(alert.getAlertDate().equals(today))
                 .isPast(alert.getAlertDate().isBefore(today))
                 .build();
@@ -279,7 +279,7 @@ public class ExpiryCalendarService {
                 .value(record.getEstimatedLoss())
                 .category("Quarantine")
                 .severity("HIGH")
-                .actionUrl("/quarantine/" + record.getId())
+                .actionUrl("/quarantine")
                 .build();
 
         return ExpiryCalendarEventDTO.builder()
@@ -295,7 +295,7 @@ public class ExpiryCalendarService {
                 .color("#9c27b0") // Purple
                 .icon("block")
                 .details(Collections.singletonList(detail))
-                .actionUrl("/quarantine/" + record.getId())
+                .actionUrl("/quarantine")
                 .isToday(record.getQuarantineDate().equals(today))
                 .isPast(record.getQuarantineDate().isBefore(today))
                 .build();
@@ -313,7 +313,7 @@ public class ExpiryCalendarService {
             LocalDate date = entry.getKey();
             List<ExpiryCalendarEventDTO> events = entry.getValue();
 
-            if (events.size() > 3) {
+            if (events.size() > 2) {
                 // Create a summary event for dates with many events
                 ExpiryCalendarEventDTO summaryEvent = createSummaryEvent(date, events);
                 groupedMap.put(date, Arrays.asList(summaryEvent));
