@@ -65,6 +65,12 @@ public class SecurityConfig {
                         .requestMatchers("/").permitAll()
                         .requestMatchers("/health/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()  // Allow public access to uploaded images
+                        // Add WebSocket endpoints
+                        .requestMatchers("/ws/**").permitAll()
+                        .requestMatchers("/ws").permitAll()
+                        .requestMatchers("/app/**").authenticated()
+                        .requestMatchers("/topic/**").authenticated()
+                        .requestMatchers("/queue/**").authenticated()
                         .requestMatchers("/api/users/**").hasRole("HOSPITAL_MANAGER")
                         .requestMatchers("/api/products/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
                         .requestMatchers("/api/categories/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
