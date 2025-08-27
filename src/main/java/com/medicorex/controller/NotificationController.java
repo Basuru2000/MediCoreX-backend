@@ -5,18 +5,25 @@ import com.medicorex.entity.Notification.*;
 import com.medicorex.entity.User;
 import com.medicorex.repository.UserRepository;
 import com.medicorex.service.NotificationService;
+import com.medicorex.service.NotificationPreferenceService;
+import com.medicorex.websocket.handler.NotificationWebSocketHandler;
+import com.medicorex.websocket.service.WebSocketNotificationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +36,94 @@ public class NotificationController {
 
     private final NotificationService notificationService;
     private final UserRepository userRepository;
+    private final NotificationPreferenceService preferenceService;
+
+    // Add WebSocket services
+    @Autowired(required = false)
+    private WebSocketNotificationService webSocketService;
+
+    @Autowired(required = false)
+    private NotificationWebSocketHandler webSocketHandler;
+
+    /**
+     * Get WebSocket connection status for current user
+     */
+    @GetMapping("/websocket/status")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getWebSocketStatus() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+
+        Map<String, Object> status = new HashMap<>();
+
+        if (webSocketHandler != null) {
+            status.put("websocketEnabled", true);
+            status.put("userConnected", webSocketHandler.isUserConnected(username));
+            status.put("sessionCount", webSocketHandler.getUserSessionCount(username));
+            status.put("serverStats", webSocketHandler.getSessionStats());
+        } else {
+            status.put("websocketEnabled", false);
+            status.put("message", "WebSocket service not available");
+        }
+
+        return ResponseEntity.ok(status);
+    }
+
+    /**
+     * Test WebSocket notification sending
+     */
+    @PostMapping("/websocket/test")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<Map<String, Object>> testWebSocketNotification() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+
+        Map<String, Object> result = new HashMap<>();
+
+        if (webSocketService != null) {
+            try {
+                // Send test system alert
+                webSocketService.sendSystemAlert(
+                        "WebSocket Test",
+                        "This is a test notification sent via WebSocket",
+                        Map.of("testId", System.currentTimeMillis())
+                );
+
+                result.put("success", true);
+                result.put("message", "Test notification sent via WebSocket");
+                result.put("timestamp", System.currentTimeMillis());
+            } catch (Exception e) {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            }
+        } else {
+            result.put("success", false);
+            result.put("error", "WebSocket service not available");
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Force disconnect a user's WebSocket sessions (admin only)
+     */
+    @PostMapping("/websocket/disconnect/{username}")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<Map<String, String>> forceDisconnectUser(@PathVariable String username) {
+        if (webSocketHandler != null) {
+            webSocketHandler.forceDisconnectUser(username);
+            return ResponseEntity.ok(Map.of(
+                    "status", "success",
+                    "message", "Disconnection request sent for user: " + username
+            ));
+        }
+
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of(
+                        "status", "error",
+                        "message", "WebSocket service not available"
+                ));
+    }
 
     /**
      * Get current user's notifications

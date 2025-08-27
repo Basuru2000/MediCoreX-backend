@@ -23,6 +23,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // Find by single role
     List<User> findByRole(UserRole role);  // Changed to UserRole
 
+    // Find by role and active status
+    List<User> findByRoleAndActiveTrue(UserRole role);
+
     // Find by multiple roles
     List<User> findByRoleIn(List<UserRole> roles);  // Changed to UserRole
 

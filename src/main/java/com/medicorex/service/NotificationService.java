@@ -16,6 +16,7 @@ import com.medicorex.repository.NotificationRepository;
 import com.medicorex.repository.NotificationTemplateRepository;
 import com.medicorex.repository.UserRepository;
 import com.medicorex.service.NotificationPreferenceService;
+import com.medicorex.websocket.service.WebSocketNotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +49,9 @@ public class NotificationService {
     @Autowired
     @Lazy // Use lazy loading to avoid circular dependency
     private NotificationPreferenceService preferenceService2;
+
+    @Autowired(required = false)
+    private WebSocketNotificationService webSocketService;
 
     /**
      * Create notification with preference checking
@@ -88,10 +92,42 @@ public class NotificationService {
         // Mark that preferences were checked (if the field exists)
         // notification.setPreferenceChecked(true); // Uncomment if you added this field
 
-        Notification saved = notificationRepository.save(notification);
+        Notification savedNotification = notificationRepository.save(notification);
+        NotificationDTO notificationDTO = convertToDTO(savedNotification);
+
+        // FIX: Always send updated count via WebSocket
+        if (webSocketService != null) {
+            try {
+                User recipient = userRepository.findById(createDTO.getUserId()).orElse(null);
+                if (recipient != null) {
+                    // Get the actual unread count from database
+                    Integer unreadCount = notificationRepository.countByUserIdAndStatus(
+                            recipient.getId(),
+                            NotificationStatus.UNREAD
+                    ).intValue();
+
+                    // Send notification with correct unread count
+                    webSocketService.sendNotificationToUser(
+                            recipient.getUsername(),
+                            notificationDTO,
+                            unreadCount
+                    );
+
+                    // Also send a separate count update message
+                    webSocketService.sendCountUpdate(recipient.getUsername(), unreadCount);
+
+                    log.debug("Sent notification via WebSocket to user: {} with unread count: {}",
+                            recipient.getUsername(), unreadCount);
+                }
+            } catch (Exception e) {
+                log.error("Failed to send WebSocket notification: {}", e.getMessage());
+                // Don't fail the notification creation if WebSocket fails
+            }
+        }
+
         log.info("Created notification for user {}: {}", user.getUsername(), notification.getTitle());
 
-        return convertToDTO(saved);
+        return notificationDTO;
     }
 
     /**
@@ -469,6 +505,42 @@ public class NotificationService {
     }
 
     /**
+     * Mark notification as read with WebSocket update
+     */
+    public NotificationDTO markAsRead(Long notificationId, Long userId) {
+        Notification notification = notificationRepository.findById(notificationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Notification", "id", notificationId));
+
+        if (notification.getStatus() != NotificationStatus.READ) {
+            notification.setStatus(NotificationStatus.READ);
+            notification.setReadAt(LocalDateTime.now());
+            notification = notificationRepository.save(notification);
+            updateUserUnreadCount(notification.getUser().getId());
+        }
+
+        // FIX: Send updated count after marking as read
+        if (webSocketService != null) {
+            try {
+                User user = userRepository.findById(userId).orElse(null);
+                if (user != null) {
+                    // Get updated unread count
+                    Integer unreadCount = notificationRepository.countByUserIdAndStatus(
+                            userId,
+                            NotificationStatus.UNREAD
+                    ).intValue();
+
+                    // Send count update
+                    webSocketService.sendCountUpdate(user.getUsername(), unreadCount);
+                }
+            } catch (Exception e) {
+                log.error("Failed to send WebSocket update: {}", e.getMessage());
+            }
+        }
+
+        return convertToDTO(notification);
+    }
+
+    /**
      * Mark all notifications as read for user
      */
     public void markAllAsRead(Long userId) {
@@ -755,6 +827,24 @@ public class NotificationService {
         // Implementation for grouping similar notifications
         // This is a placeholder - implement based on your business logic
         return 0;
+    }
+
+    /**
+     * Send real-time stock update notification
+     */
+    public void sendStockUpdateNotification(Long productId, String productName, Integer newQuantity) {
+        if (webSocketService != null) {
+            webSocketService.sendStockUpdate(productId, productName, newQuantity, null);
+        }
+    }
+
+    /**
+     * Send quarantine alert
+     */
+    public void sendQuarantineAlert(Long batchId, String batchNumber, String reason) {
+        if (webSocketService != null) {
+            webSocketService.sendQuarantineAlert(batchId, batchNumber, reason);
+        }
     }
 
     /**
