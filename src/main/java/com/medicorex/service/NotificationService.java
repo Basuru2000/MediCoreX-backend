@@ -95,22 +95,29 @@ public class NotificationService {
         Notification savedNotification = notificationRepository.save(notification);
         NotificationDTO notificationDTO = convertToDTO(savedNotification);
 
-        // Send via WebSocket if service is available
+        // FIX: Always send updated count via WebSocket
         if (webSocketService != null) {
             try {
-                User recipient = userRepository.findById(createDTO.getUserId())
-                        .orElse(null);
+                User recipient = userRepository.findById(createDTO.getUserId()).orElse(null);
                 if (recipient != null) {
+                    // Get the actual unread count from database
                     Integer unreadCount = notificationRepository.countByUserIdAndStatus(
                             recipient.getId(),
                             NotificationStatus.UNREAD
                     ).intValue();
+
+                    // Send notification with correct unread count
                     webSocketService.sendNotificationToUser(
                             recipient.getUsername(),
                             notificationDTO,
                             unreadCount
                     );
-                    log.debug("Sent notification via WebSocket to user: {}", recipient.getUsername());
+
+                    // Also send a separate count update message
+                    webSocketService.sendCountUpdate(recipient.getUsername(), unreadCount);
+
+                    log.debug("Sent notification via WebSocket to user: {} with unread count: {}",
+                            recipient.getUsername(), unreadCount);
                 }
             } catch (Exception e) {
                 log.error("Failed to send WebSocket notification: {}", e.getMessage());
@@ -511,20 +518,19 @@ public class NotificationService {
             updateUserUnreadCount(notification.getUser().getId());
         }
 
-        // Send read status via WebSocket
+        // FIX: Send updated count after marking as read
         if (webSocketService != null) {
             try {
                 User user = userRepository.findById(userId).orElse(null);
                 if (user != null) {
+                    // Get updated unread count
                     Integer unreadCount = notificationRepository.countByUserIdAndStatus(
                             userId,
                             NotificationStatus.UNREAD
                     ).intValue();
-                    webSocketService.sendNotificationToUser(
-                            user.getUsername(),
-                            null,
-                            unreadCount
-                    );
+
+                    // Send count update
+                    webSocketService.sendCountUpdate(user.getUsername(), unreadCount);
                 }
             } catch (Exception e) {
                 log.error("Failed to send WebSocket update: {}", e.getMessage());

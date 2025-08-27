@@ -49,6 +49,28 @@ public class WebSocketNotificationService {
     }
 
     /**
+     * Send notification count update to specific user
+     */
+    public void sendCountUpdate(String username, Integer unreadCount) {
+        try {
+            Map<String, Object> countUpdate = new HashMap<>();
+            countUpdate.put("type", "COUNT_UPDATE");
+            countUpdate.put("unreadCount", unreadCount);
+            countUpdate.put("timestamp", LocalDateTime.now());
+
+            messagingTemplate.convertAndSendToUser(
+                    username,
+                    "/queue/notifications",
+                    countUpdate
+            );
+
+            log.debug("Sent count update to user {}: {} unread", username, unreadCount);
+        } catch (Exception e) {
+            log.error("Failed to send count update to user {}: {}", username, e.getMessage());
+        }
+    }
+
+    /**
      * Send notification to users by role
      */
     public void sendNotificationToRole(String role, NotificationDTO notification) {
