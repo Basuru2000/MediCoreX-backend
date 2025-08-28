@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -90,6 +91,21 @@ public class ExpiryCalendarController {
 
         ExpiryCalendarDTO calendar = calendarService.getCalendarData(request);
         return ResponseEntity.ok(calendar);
+    }
+
+    /**
+     * Get calendar events for date range
+     */
+    @GetMapping("/events")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<ExpiryCalendarEventDTO>> getCalendarEvents(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false, defaultValue = "week") String view) {
+
+        log.debug("Fetching calendar events from {} to {} for view: {}", startDate, endDate, view);
+        List<ExpiryCalendarEventDTO> events = calendarService.getCalendarEvents(startDate, endDate, view);
+        return ResponseEntity.ok(events);
     }
 
     /**

@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonValue;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -36,12 +37,30 @@ public class ExpiryCalendarEventDTO {
     private Boolean isPast;
     private Integer daysUntil;
 
+    // Additional fields from the second version
+    private Long productId;
+    private String productName;
+    private Long batchId;
+    private String batchNumber;
+    private Integer quantity;
+    private Integer daysUntilExpiry;
+
     public enum EventType {
-        BATCH_EXPIRY,
-        PRODUCT_EXPIRY,
-        ALERT,
-        QUARANTINE,
-        MULTIPLE
+        BATCH_EXPIRY("BATCH_EXPIRY"),
+        EXPIRY_ALERT("EXPIRY_ALERT"),
+        QUARANTINE("QUARANTINE"),
+        STOCK_ALERT("STOCK_ALERT");
+
+        private final String value;
+
+        EventType(String value) {
+            this.value = value;
+        }
+
+        @JsonValue
+        public String getValue() {
+            return value;
+        }
     }
 
     public enum EventSeverity {
