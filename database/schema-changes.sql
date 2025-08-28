@@ -1488,7 +1488,36 @@ CALL RefreshExpiryCalendarCache(
         DATE_ADD(CURDATE(), INTERVAL 90 DAY)
      );
 
+-- Run this SQL script to add missing indexes
+-- Compatible with MySQL versions before 8.0.13
 
+-- 1. CRITICAL: Missing index on notifications.expires_at
+ALTER TABLE notifications ADD INDEX idx_notifications_expires_at (expires_at);
+
+-- 2. Optimize notification queries
+ALTER TABLE notifications ADD INDEX idx_notifications_user_status (user_id, status, created_at DESC);
+
+-- 3. Product batch performance
+ALTER TABLE product_batches ADD INDEX idx_batch_product_status (product_id, status);
+
+-- 4. Expiry alerts optimization
+ALTER TABLE expiry_alerts ADD INDEX idx_expiry_alert_batch_status (batch_id, status);
+
+-- 5. Stock transactions history
+ALTER TABLE stock_transactions ADD INDEX idx_stock_trans_product_date (product_id, transaction_date DESC);
+
+-- 6. Quarantine lookups
+ALTER TABLE quarantine_records ADD INDEX idx_quarantine_date_status (quarantine_date, status);
+
+-- 7. Products - CORRECTED COLUMN NAMES
+ALTER TABLE products ADD INDEX idx_products_code (code);      -- Changed from product_code to code
+ALTER TABLE products ADD INDEX idx_products_barcode (barcode); -- Changed from barcode_number to barcode
+
+-- 8. User lookups (if not exists)
+ALTER TABLE users ADD INDEX idx_users_email (email);
+
+-- Update table statistics
+ANALYZE TABLE notifications, product_batches, expiry_alerts, stock_transactions, quarantine_records, products, users;
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================

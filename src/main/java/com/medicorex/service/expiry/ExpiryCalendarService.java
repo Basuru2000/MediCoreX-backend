@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -75,6 +76,71 @@ public class ExpiryCalendarService {
                 .criticalDates(criticalDates)
                 .metadata(metadata)
                 .build();
+    }
+
+    /**
+     * Get calendar events for date range
+     */
+    @Cacheable(value = "calendarData", key = "#startDate + '_' + #endDate + '_' + #view")
+    public List<ExpiryCalendarEventDTO> getCalendarEvents(LocalDate startDate, LocalDate endDate, String view) {
+        List<ExpiryCalendarEventDTO> events = new ArrayList<>();
+
+        // Get expiring batches
+        List<ProductBatch> expiringBatches = batchRepository.findBatchesExpiringBetween(startDate, endDate);
+
+        // Convert batches to calendar events
+        for (ProductBatch batch : expiringBatches) {
+            ExpiryCalendarEventDTO event = ExpiryCalendarEventDTO.builder()
+                    .id(batch.getId())
+                    .date(batch.getExpiryDate())
+                    .type(ExpiryCalendarEventDTO.EventType.BATCH_EXPIRY)  // Use enum
+                    .title(batch.getProduct().getName() + " - Batch: " + batch.getBatchNumber())
+                    .description("Quantity: " + batch.getQuantity())
+                    .severity(calculateSeverity(batch.getExpiryDate()))
+                    .productId(batch.getProduct().getId())
+                    .productName(batch.getProduct().getName())
+                    .batchId(batch.getId())
+                    .batchNumber(batch.getBatchNumber())
+                    .quantity(batch.getQuantity())
+                    .daysUntilExpiry((int) ChronoUnit.DAYS.between(LocalDate.now(), batch.getExpiryDate()))
+                    .build();
+            events.add(event);
+        }
+
+        // Get expiry alerts for the period
+        List<ExpiryAlert> alerts = alertRepository.findByExpiryDateBetween(startDate, endDate);
+
+        // Add alert events (avoid duplicates with batch events)
+        for (ExpiryAlert alert : alerts) {
+            // Check if we already have a batch event for this
+            boolean alreadyAdded = events.stream()
+                    .anyMatch(e -> e.getBatchId() != null && e.getBatchId().equals(alert.getBatch() != null ? alert.getBatch().getId() : null));
+
+            if (!alreadyAdded && alert.getStatus() == ExpiryAlert.AlertStatus.PENDING) {
+                ExpiryCalendarEventDTO event = ExpiryCalendarEventDTO.builder()
+                        .id(alert.getId())
+                        .date(alert.getExpiryDate())
+                        .type(ExpiryCalendarEventDTO.EventType.EXPIRY_ALERT)  // Use enum
+                        .title("Alert: " + alert.getProduct().getName())
+                        .description(alert.getConfig().getTierName())
+                        .severity(mapAlertSeverityToEventSeverity(alert.getConfig().getSeverity()))
+                        .productId(alert.getProduct().getId())
+                        .productName(alert.getProduct().getName())
+                        .quantity(alert.getQuantityAffected())
+                        .daysUntilExpiry((int) ChronoUnit.DAYS.between(LocalDate.now(), alert.getExpiryDate()))
+                        .build();
+                events.add(event);
+            }
+        }
+
+        // Sort by date and severity
+        events.sort((a, b) -> {
+            int dateCompare = a.getDate().compareTo(b.getDate());
+            if (dateCompare != 0) return dateCompare;
+            return getSeverityOrder(b.getSeverity()) - getSeverityOrder(a.getSeverity());
+        });
+
+        return events;
     }
 
     /**
@@ -249,7 +315,7 @@ public class ExpiryCalendarService {
         return ExpiryCalendarEventDTO.builder()
                 .id(alert.getId())
                 .date(alert.getAlertDate())
-                .type(ExpiryCalendarEventDTO.EventType.ALERT)
+                .type(ExpiryCalendarEventDTO.EventType.EXPIRY_ALERT)
                 .severity(severity)
                 .title(config.getTierName() + " Alert")
                 .description(String.format("%s - %s", product.getName(), config.getDescription()))
@@ -353,7 +419,7 @@ public class ExpiryCalendarService {
 
         return ExpiryCalendarEventDTO.builder()
                 .date(date)
-                .type(ExpiryCalendarEventDTO.EventType.MULTIPLE)
+                .type(ExpiryCalendarEventDTO.EventType.STOCK_ALERT)
                 .severity(highestSeverity)
                 .title(String.format("%d Events", totalItems))
                 .description(String.format("%d items, %d total units", totalItems, totalQuantity))
@@ -399,7 +465,7 @@ public class ExpiryCalendarService {
                 .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.BATCH_EXPIRY)
                 .count();
         int alertCount = (int) allEvents.stream()
-                .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.ALERT)
+                .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.EXPIRY_ALERT)
                 .count();
 
         BigDecimal totalValue = allEvents.stream()
@@ -464,7 +530,7 @@ public class ExpiryCalendarService {
                         .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.BATCH_EXPIRY)
                         .count())
                 .alertCount((int) weekEvents.stream()
-                        .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.ALERT)
+                        .filter(e -> e.getType() == ExpiryCalendarEventDTO.EventType.EXPIRY_ALERT)
                         .count())
                 .valueAtRisk(weekEvents.stream()
                         .map(ExpiryCalendarEventDTO::getTotalValue)
@@ -524,6 +590,16 @@ public class ExpiryCalendarService {
     }
 
     // Helper methods
+    private ExpiryCalendarEventDTO.EventSeverity calculateSeverity(LocalDate expiryDate) {
+        long daysUntilExpiry = ChronoUnit.DAYS.between(LocalDate.now(), expiryDate);
+
+        if (daysUntilExpiry <= 0) return ExpiryCalendarEventDTO.EventSeverity.CRITICAL;
+        else if (daysUntilExpiry <= 7) return ExpiryCalendarEventDTO.EventSeverity.CRITICAL;
+        else if (daysUntilExpiry <= 30) return ExpiryCalendarEventDTO.EventSeverity.HIGH;
+        else if (daysUntilExpiry <= 60) return ExpiryCalendarEventDTO.EventSeverity.MEDIUM;
+        else return ExpiryCalendarEventDTO.EventSeverity.LOW;
+    }
+
     private int getSeverityOrder(ExpiryCalendarEventDTO.EventSeverity severity) {
         switch (severity) {
             case CRITICAL: return 0;
@@ -534,6 +610,17 @@ public class ExpiryCalendarService {
         }
     }
 
+    private int getSeverityOrder(String severity) {
+        switch (severity) {
+            case "EXPIRED": return 5;
+            case "CRITICAL": return 4;
+            case "HIGH": return 3;
+            case "MEDIUM": return 2;
+            case "LOW": return 1;
+            default: return 0;
+        }
+    }
+
     private String getColorForSeverity(ExpiryCalendarEventDTO.EventSeverity severity) {
         switch (severity) {
             case CRITICAL: return "#d32f2f";
@@ -541,6 +628,19 @@ public class ExpiryCalendarService {
             case MEDIUM: return "#ffc107";
             case LOW: return "#4caf50";
             default: return "#9e9e9e";
+        }
+    }
+
+    private ExpiryCalendarEventDTO.EventSeverity mapAlertSeverityToEventSeverity(ExpiryAlertConfig.AlertSeverity alertSeverity) {
+        switch (alertSeverity) {
+            case CRITICAL:
+                return ExpiryCalendarEventDTO.EventSeverity.CRITICAL;
+            case WARNING:
+                return ExpiryCalendarEventDTO.EventSeverity.HIGH;
+            case INFO:
+                return ExpiryCalendarEventDTO.EventSeverity.MEDIUM;
+            default:
+                return ExpiryCalendarEventDTO.EventSeverity.LOW;
         }
     }
 }
