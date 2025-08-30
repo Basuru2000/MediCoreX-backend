@@ -15,11 +15,14 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -34,6 +37,10 @@ public class ProductImportService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final BarcodeService barcodeService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     /**
@@ -94,6 +101,7 @@ public class ProductImportService {
 
             // Save all successful imports
             productRepository.saveAll(successfulImports);
+            entityManager.flush();
 
         } catch (CsvException e) {
             errors.add(new ImportErrorDTO(0, "CSV parsing error: " + e.getMessage()));
@@ -143,16 +151,28 @@ public class ProductImportService {
                 try {
                     Product product = parseProductFromExcel(row, rowNumber);
                     if (product != null) {
-                        successfulImports.add(product);
+                        // Save immediately to get ID for barcode generation
+                        Product savedProduct = productRepository.save(product);
+
+                        // Generate barcode if not provided
+                        if (savedProduct.getBarcode() == null || savedProduct.getBarcode().isEmpty()) {
+                            savedProduct.setBarcode(barcodeService.generateBarcode(savedProduct));
+                            savedProduct = productRepository.save(savedProduct);
+                        }
+
+                        successfulImports.add(savedProduct);
                     }
                 } catch (Exception e) {
                     errors.add(new ImportErrorDTO(rowNumber, e.getMessage()));
+                    log.error("Error importing row {}: {}", rowNumber, e.getMessage());
                 }
             }
 
-            // Save all successful imports
-            productRepository.saveAll(successfulImports);
+            // Flush to ensure all products are persisted
+            entityManager.flush();
         }
+
+        log.info("Excel import completed: {} successful, {} errors", successfulImports.size(), errors.size());
 
         return new ImportResultDTO(
                 totalRows,
@@ -282,7 +302,7 @@ public class ProductImportService {
             product.setCode(generateProductCode());
         }
 
-        // Barcode (optional, auto-generate if empty)
+        // Barcode (optional, will be generated after save if empty)
         String barcode = getCellValueAsString(row.getCell(1));
         if (!barcode.isEmpty()) {
             if (productRepository.findByBarcode(barcode).isPresent()) {
@@ -306,23 +326,19 @@ public class ProductImportService {
 
         // Category (required)
         String categoryName = getCellValueAsString(row.getCell(4));
-        Category category = categoryRepository.findByName(categoryName)
+        if (categoryName.isEmpty()) {
+            throw new IllegalArgumentException("Category is required");
+        }
+
+        Category category = categoryRepository.findByNameIgnoreCase(categoryName)
                 .orElseThrow(() -> new IllegalArgumentException("Category '" + categoryName + "' not found"));
         product.setCategory(category);
 
         // Quantity (required)
-        int quantity = getCellValueAsInteger(row.getCell(5));
-        if (quantity < 0) {
-            throw new IllegalArgumentException("Quantity cannot be negative");
-        }
-        product.setQuantity(quantity);
+        product.setQuantity(getCellValueAsInteger(row.getCell(5)));
 
         // Min Stock Level (required)
-        int minStock = getCellValueAsInteger(row.getCell(6));
-        if (minStock < 0) {
-            throw new IllegalArgumentException("Minimum stock level cannot be negative");
-        }
-        product.setMinStockLevel(minStock);
+        product.setMinStockLevel(getCellValueAsInteger(row.getCell(6)));
 
         // Unit (required)
         String unit = getCellValueAsString(row.getCell(7));
@@ -332,24 +348,33 @@ public class ProductImportService {
         product.setUnit(unit);
 
         // Unit Price (required)
-        BigDecimal price = getCellValueAsBigDecimal(row.getCell(8));
-        if (price.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalArgumentException("Unit price cannot be negative");
-        }
-        product.setUnitPrice(price);
+        product.setUnitPrice(getCellValueAsBigDecimal(row.getCell(8)));
 
         // Expiry Date (optional)
-        Cell expiryCell = row.getCell(9);
-        if (expiryCell != null) {
-            LocalDate expiryDate = getCellValueAsDate(expiryCell);
-            product.setExpiryDate(expiryDate);
+        if (row.getCell(9) != null) {
+            String expiryDateStr = getCellValueAsString(row.getCell(9));
+            if (!expiryDateStr.isEmpty()) {
+                try {
+                    product.setExpiryDate(LocalDate.parse(expiryDateStr, DATE_FORMATTER));
+                } catch (DateTimeParseException e) {
+                    throw new IllegalArgumentException("Invalid expiry date format. Use YYYY-MM-DD");
+                }
+            }
         }
 
         // Batch Number (optional)
-        product.setBatchNumber(getCellValueAsString(row.getCell(10)));
+        if (row.getCell(10) != null) {
+            product.setBatchNumber(getCellValueAsString(row.getCell(10)));
+        }
 
         // Manufacturer (optional)
-        product.setManufacturer(getCellValueAsString(row.getCell(11)));
+        if (row.getCell(11) != null) {
+            product.setManufacturer(getCellValueAsString(row.getCell(11)));
+        }
+
+        // Set timestamps
+        product.setCreatedAt(LocalDateTime.now());
+        product.setUpdatedAt(LocalDateTime.now());
 
         return product;
     }
@@ -452,10 +477,10 @@ public class ProductImportService {
                 try {
                     return new BigDecimal(cell.getStringCellValue().trim());
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid decimal number: " + cell.getStringCellValue());
+                    throw new IllegalArgumentException("Invalid numeric value: " + cell.getStringCellValue());
                 }
             default:
-                throw new IllegalArgumentException("Invalid decimal format");
+                throw new IllegalArgumentException("Invalid cell type for numeric value");
         }
     }
 

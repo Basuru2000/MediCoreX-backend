@@ -93,63 +93,62 @@ public class BarcodeService {
      */
     public String decodeBarcode(String base64Image) throws IOException {
         log.info("Starting barcode decoding process");
-
         // Remove data URL prefix if present
         String base64Data = base64Image;
         if (base64Image.contains(",")) {
             base64Data = base64Image.split(",")[1];
         }
-
         byte[] imageBytes = Base64.getDecoder().decode(base64Data);
         BufferedImage image = ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
-
         if (image == null) {
-            throw new IOException("Failed to decode image from base64 data");
+            throw new BarcodeDecodeException("Failed to decode image from base64 data");
         }
-
         log.info("Image loaded successfully: width={}, height={}", image.getWidth(), image.getHeight());
-
-        // Try multiple approaches for better accuracy
-        String result = null;
-
-        // Approach 1: Try with the original image
+        // Configure hints for better detection
+        Map<DecodeHintType, Object> hints = new HashMap<>();
+        hints.put(DecodeHintType.TRY_HARDER, true);
+        hints.put(DecodeHintType.POSSIBLE_FORMATS, Arrays.asList(
+                BarcodeFormat.CODE_128,
+                BarcodeFormat.CODE_39,
+                BarcodeFormat.EAN_13,
+                BarcodeFormat.EAN_8,
+                BarcodeFormat.UPC_A,
+                BarcodeFormat.UPC_E,
+                BarcodeFormat.QR_CODE
+        ));
+        // Try multiple readers
+        MultiFormatReader multiReader = new MultiFormatReader();
+        multiReader.setHints(hints);
         try {
-            result = tryDecodeBarcode(image, "original");
-            if (result != null) return result;
-        } catch (Exception e) {
-            log.debug("Original image decode failed: {}", e.getMessage());
-        }
+            // Convert to luminance source
+            LuminanceSource source = new BufferedImageLuminanceSource(image);
 
-        // Approach 2: Try with different binarizers
-        try {
-            result = tryDecodeWithDifferentBinarizers(image);
-            if (result != null) return result;
-        } catch (Exception e) {
-            log.debug("Different binarizers decode failed: {}", e.getMessage());
-        }
+            // Try with GlobalHistogramBinarizer first
+            BinaryBitmap bitmap = new BinaryBitmap(new GlobalHistogramBinarizer(source));
+            Result result = multiReader.decode(bitmap);
 
-        // Approach 3: Try with image preprocessing
-        try {
-            BufferedImage processedImage = preprocessImage(image);
-            result = tryDecodeBarcode(processedImage, "preprocessed");
-            if (result != null) return result;
-        } catch (Exception e) {
-            log.debug("Preprocessed image decode failed: {}", e.getMessage());
-        }
-
-        // Approach 4: Try with rotation
-        try {
-            for (int angle : new int[]{90, 180, 270}) {
-                BufferedImage rotatedImage = rotateImage(image, angle);
-                result = tryDecodeBarcode(rotatedImage, "rotated " + angle);
-                if (result != null) return result;
+            if (result != null && result.getText() != null && !result.getText().isEmpty()) {
+                log.info("Barcode decoded successfully: {}", result.getText());
+                return result.getText();
             }
-        } catch (Exception e) {
-            log.debug("Rotated image decode failed: {}", e.getMessage());
+        } catch (NotFoundException e) {
+            log.debug("First attempt failed, trying HybridBinarizer");
         }
+        try {
+            // Try with HybridBinarizer
+            LuminanceSource source = new BufferedImageLuminanceSource(image);
+            BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+            Result result = multiReader.decode(bitmap);
 
-        log.error("No barcode found in the image after trying all approaches");
-        throw new BarcodeDecodeException("No barcode found in the image. Please ensure the image contains a clear, readable barcode.");
+            if (result != null && result.getText() != null && !result.getText().isEmpty()) {
+                log.info("Barcode decoded successfully with HybridBinarizer: {}", result.getText());
+                return result.getText();
+            }
+        } catch (NotFoundException e) {
+            log.debug("Second attempt failed");
+        }
+        // If all attempts fail, throw exception with helpful message
+        throw new BarcodeDecodeException("No barcode found in the image. Please ensure the image contains a clear, readable barcode and try again.");
     }
 
     /**

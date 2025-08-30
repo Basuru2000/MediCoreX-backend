@@ -42,9 +42,14 @@ public class ProductController {
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
     public ResponseEntity<PageResponseDTO<ProductDTO>> getAllProducts(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
-            @RequestParam(defaultValue = "name") String sortBy,
-            @RequestParam(defaultValue = "ASC") String sortDirection) {
+            @RequestParam(defaultValue = "100") int size,
+            @RequestParam(defaultValue = "id") String sortBy,
+            @RequestParam(defaultValue = "DESC") String sortDirection) {
+
+        // Add validation to prevent excessive page sizes
+        if (size > 100) {
+            size = 100;  // Cap at 100 for performance
+        }
 
         Sort.Direction direction = sortDirection.equalsIgnoreCase("DESC")
                 ? Sort.Direction.DESC : Sort.Direction.ASC;

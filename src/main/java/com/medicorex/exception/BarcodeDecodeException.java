@@ -1,3 +1,5 @@
+// Create new file: src/main/java/com/medicorex/exception/BarcodeDecodeException.java
+
 package com.medicorex.exception;
 
 /**

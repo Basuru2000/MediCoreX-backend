@@ -1518,6 +1518,9 @@ ALTER TABLE users ADD INDEX idx_users_email (email);
 
 -- Update table statistics
 ANALYZE TABLE notifications, product_batches, expiry_alerts, stock_transactions, quarantine_records, products, users;
+
+
+
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
@@ -1547,6 +1550,4 @@ ANALYZE TABLE notifications, product_batches, expiry_alerts, stock_transactions,
 
 -- =====================================================
 -- END OF SCHEMA CHANGES
--- Last Updated: 2024-02-XX (Update with today's date)
--- Total Tables: 9 (categories, users, suppliers, products, stock_transactions, file_uploads, expiry_alert_configs, expiry_alerts, expiry_check_logs)
 -- =====================================================
