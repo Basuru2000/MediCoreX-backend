@@ -35,4 +35,7 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
             "INNER JOIN category_tree ct ON c.parent_id = ct.id" +
             ") SELECT * FROM category_tree", nativeQuery = true)
     List<Category> findAllDescendants(@Param("categoryId") Long categoryId);
+
+    // Case-insensitive category name search
+    Optional<Category> findByNameIgnoreCase(String name);
 }
