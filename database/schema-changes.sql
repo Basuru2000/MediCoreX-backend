@@ -1472,8 +1472,8 @@ DELIMITER ;
 -- Create event for automatic cache refresh
 -- First check if event scheduler is enabled
 -- SELECT @@event_scheduler;
--- If not enabled, enable it: SET GLOBAL event_scheduler = ON;
-
+-- If not enabled, enable it:
+SET GLOBAL event_scheduler = ON;
 DROP EVENT IF EXISTS refresh_calendar_cache_event;
 CREATE EVENT refresh_calendar_cache_event
     ON SCHEDULE EVERY 1 HOUR
@@ -1516,8 +1516,9 @@ ALTER TABLE products ADD INDEX idx_products_barcode (barcode); -- Changed from b
 -- 8. User lookups (if not exists)
 ALTER TABLE users ADD INDEX idx_users_email (email);
 
--- Update table statistics
-ANALYZE TABLE notifications, product_batches, expiry_alerts, stock_transactions, quarantine_records, products, users;
+-- 9. Add these indexes for better performance
+ALTER TABLE product_batches ADD INDEX idx_expiry_status_quantity (expiry_date, status, quantity);
+ALTER TABLE notifications ADD INDEX idx_user_created (user_id, created_at DESC);
 
 
 
