@@ -26,7 +26,7 @@ import java.util.Arrays;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity
+@EnableMethodSecurity // This enables @PreAuthorize annotations
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -60,23 +60,31 @@ public class SecurityConfig {
                 .exceptionHandling(exception -> exception.authenticationEntryPoint(jwtAuthenticationEntryPoint))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Public endpoints
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/test/**").permitAll()
                         .requestMatchers("/").permitAll()
                         .requestMatchers("/health/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()  // Allow public access to uploaded images
-                        // Add WebSocket endpoints
+
+                        // WebSocket endpoints
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/app/**").authenticated()
                         .requestMatchers("/topic/**").authenticated()
                         .requestMatchers("/queue/**").authenticated()
-                        .requestMatchers("/api/users/**").hasRole("HOSPITAL_MANAGER")
-                        .requestMatchers("/api/products/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
-                        .requestMatchers("/api/categories/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF", "PROCUREMENT_OFFICER")
-                        .requestMatchers("/api/stock/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
-                        .requestMatchers("/api/files/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
-                        .requestMatchers("/api/expiry/**").hasAnyRole("HOSPITAL_MANAGER", "PHARMACY_STAFF")
+
+                        // REMOVED the hardcoded user restriction - let @PreAuthorize handle it
+                        // .requestMatchers("/api/users/**").hasRole("HOSPITAL_MANAGER")
+
+                        // Other API endpoints - using @PreAuthorize in controllers for fine-grained control
+                        // These are just basic checks that user is authenticated
+                        .requestMatchers("/api/products/**").authenticated()
+                        .requestMatchers("/api/categories/**").authenticated()
+                        .requestMatchers("/api/stock/**").authenticated()
+                        .requestMatchers("/api/files/**").authenticated()
+                        .requestMatchers("/api/expiry/**").authenticated()
+                        .requestMatchers("/api/users/**").authenticated() // Just require authentication
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().authenticated()
                 );
