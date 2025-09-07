@@ -34,19 +34,6 @@ CREATE TABLE IF NOT EXISTS users (
                                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- Suppliers table
-CREATE TABLE IF NOT EXISTS suppliers (
-                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                                         name VARCHAR(100) NOT NULL,
-                                         contact_email VARCHAR(100) UNIQUE NOT NULL,
-                                         phone VARCHAR(20),
-                                         address TEXT,
-                                         contact_person VARCHAR(100),
-                                         active BOOLEAN DEFAULT TRUE,
-                                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
 -- Products table
 CREATE TABLE IF NOT EXISTS products (
                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -1520,6 +1507,77 @@ ALTER TABLE users ADD INDEX idx_users_email (email);
 ALTER TABLE product_batches ADD INDEX idx_expiry_status_quantity (expiry_date, status, quantity);
 ALTER TABLE notifications ADD INDEX idx_user_created (user_id, created_at DESC);
 
+
+-- =====================================================
+-- Date: 2024-XX-XX
+-- Feature: Supplier Management (Week 6 - Phase 1.1)
+-- Developer: Week 6 Implementation
+-- Status: PENDING
+-- =====================================================
+
+-- Supplier master table
+CREATE TABLE IF NOT EXISTS suppliers (
+                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                         code VARCHAR(50) UNIQUE NOT NULL,
+                                         name VARCHAR(200) NOT NULL,
+                                         tax_id VARCHAR(50),
+                                         registration_number VARCHAR(100),
+                                         website VARCHAR(255),
+                                         email VARCHAR(100),
+                                         phone VARCHAR(50),
+                                         fax VARCHAR(50),
+                                         address_line1 VARCHAR(255),
+                                         address_line2 VARCHAR(255),
+                                         city VARCHAR(100),
+                                         state VARCHAR(100),
+                                         country VARCHAR(100),
+                                         postal_code VARCHAR(20),
+                                         status ENUM('ACTIVE', 'INACTIVE', 'BLOCKED') DEFAULT 'ACTIVE',
+                                         rating DECIMAL(3,2) DEFAULT 0.00,
+                                         payment_terms VARCHAR(100),
+                                         credit_limit DECIMAL(12,2),
+                                         notes TEXT,
+                                         created_by BIGINT,
+                                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                         FOREIGN KEY (created_by) REFERENCES users(id),
+                                         INDEX idx_supplier_status (status),
+                                         INDEX idx_supplier_name (name)
+);
+
+-- Supplier contacts table
+CREATE TABLE IF NOT EXISTS supplier_contacts (
+                                                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                 supplier_id BIGINT NOT NULL,
+                                                 name VARCHAR(100) NOT NULL,
+                                                 designation VARCHAR(100),
+                                                 email VARCHAR(100),
+                                                 phone VARCHAR(50),
+                                                 mobile VARCHAR(50),
+                                                 is_primary BOOLEAN DEFAULT FALSE,
+                                                 notes TEXT,
+                                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                 FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                                                 INDEX idx_supplier_contact (supplier_id)
+);
+
+-- Supplier documents table
+CREATE TABLE IF NOT EXISTS supplier_documents (
+                                                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                  supplier_id BIGINT NOT NULL,
+                                                  document_type VARCHAR(50) NOT NULL,
+                                                  document_name VARCHAR(200) NOT NULL,
+                                                  file_path VARCHAR(500),
+                                                  file_size BIGINT,
+                                                  expiry_date DATE,
+                                                  uploaded_by BIGINT,
+                                                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                  FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                                                  FOREIGN KEY (uploaded_by) REFERENCES users(id),
+                                                  INDEX idx_supplier_document (supplier_id),
+                                                  INDEX idx_document_expiry (expiry_date)
+);
 
 
 -- =====================================================
