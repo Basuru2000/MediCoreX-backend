@@ -11,14 +11,22 @@ import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -31,6 +39,9 @@ public class SupplierService {
     private final SupplierContactRepository contactRepository;
     private final SupplierDocumentRepository documentRepository;
     private final UserRepository userRepository;
+
+    @Value("${file.upload-dir:./uploads}")
+    private String uploadDir;
 
     public PageResponseDTO<SupplierDTO> getAllSuppliers(Pageable pageable) {
         Page<Supplier> supplierPage = supplierRepository.findAll(pageable);
@@ -178,6 +189,78 @@ public class SupplierService {
         contactRepository.deleteById(contactId);
     }
 
+    // Document Management Methods
+    public SupplierDocumentDTO uploadDocument(Long supplierId, MultipartFile file,
+                                              String documentType, String documentName,
+                                              String expiryDate) {
+        Supplier supplier = supplierRepository.findById(supplierId)
+                .orElseThrow(() -> new ResourceNotFoundException("Supplier", "id", supplierId));
+        try {
+            // Create supplier documents directory if it doesn't exist
+            Path supplierDocsPath = Paths.get(uploadDir, "suppliers", supplierId.toString())
+                    .toAbsolutePath().normalize();
+            Files.createDirectories(supplierDocsPath);
+            // Generate unique filename
+            String originalFilename = file.getOriginalFilename();
+            String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
+            String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
+
+            // Save file
+            Path targetLocation = supplierDocsPath.resolve(uniqueFilename);
+            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+            // Create database record
+            SupplierDocument document = new SupplierDocument();
+            document.setSupplier(supplier);
+            document.setDocumentType(documentType);
+            document.setDocumentName(documentName);
+            document.setFilePath("/uploads/suppliers/" + supplierId + "/" + uniqueFilename);
+            document.setFileSize(file.getSize());
+
+            if (expiryDate != null && !expiryDate.isEmpty()) {
+                document.setExpiryDate(LocalDate.parse(expiryDate));
+            }
+
+            document.setUploadedBy(getCurrentUser());
+
+            SupplierDocument savedDocument = documentRepository.save(document);
+            log.info("Document uploaded for supplier {}: {}", supplier.getName(), documentName);
+
+            return convertDocumentToDTO(savedDocument);
+
+        } catch (Exception e) {
+            log.error("Failed to upload document: {}", e.getMessage());
+            throw new BusinessException("Failed to upload document: " + e.getMessage());
+        }
+    }
+
+    public SupplierDocument getDocumentById(Long documentId) {
+        return documentRepository.findById(documentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document", "id", documentId));
+    }
+
+    public void deleteDocument(Long documentId) {
+        SupplierDocument document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document", "id", documentId));
+
+        // Delete file from disk
+        try {
+            Path filePath = Paths.get("." + document.getFilePath()).normalize();
+            Files.deleteIfExists(filePath);
+        } catch (Exception e) {
+            log.error("Failed to delete file from disk: {}", e.getMessage());
+        }
+
+        // Delete database record
+        documentRepository.delete(document);
+        log.info("Deleted document: {}", document.getDocumentName());
+    }
+
+    public List<SupplierDocumentDTO> getSupplierDocuments(Long supplierId) {
+        return documentRepository.findBySupplierId(supplierId).stream()
+                .map(this::convertDocumentToDTO)
+                .collect(Collectors.toList());
+    }
+
     // Helper Methods
     private String generateSupplierCode() {
         long count = supplierRepository.count() + 1;
@@ -266,7 +349,6 @@ public class SupplierService {
 
         return PageResponseDTO.<SupplierDTO>builder()
                 .content(content)
-                .page(supplierPage.getNumber())
                 .size(supplierPage.getSize())
                 .totalElements(supplierPage.getTotalElements())
                 .totalPages(supplierPage.getTotalPages())

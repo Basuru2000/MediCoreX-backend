@@ -1,6 +1,9 @@
 package com.medicorex.controller;
 
 import com.medicorex.dto.*;
+import com.medicorex.entity.SupplierDocument;
+import com.medicorex.exception.BusinessException;
+import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.service.SupplierService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +14,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
 
 import java.util.List;
 
@@ -104,5 +115,80 @@ public class SupplierController {
     public ResponseEntity<Void> deleteContact(@PathVariable Long contactId) {
         supplierService.deleteContact(contactId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/documents")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<SupplierDocumentDTO> uploadDocument(
+            @PathVariable Long id,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("documentType") String documentType,
+            @RequestParam("documentName") String documentName,
+            @RequestParam(required = false) String expiryDate) {
+
+        // Validate file
+        if (file.isEmpty()) {
+            throw new BusinessException("Please select a file to upload");
+        }
+
+        // Validate file size (5MB limit)
+        if (file.getSize() > 5 * 1024 * 1024) {
+            throw new BusinessException("File size must be less than 5MB");
+        }
+
+        // Validate file type
+        String contentType = file.getContentType();
+        List<String> allowedTypes = Arrays.asList(
+                "application/pdf",
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "image/jpeg",
+                "image/png"
+        );
+
+        if (!allowedTypes.contains(contentType)) {
+            throw new BusinessException("Invalid file type. Allowed types: PDF, DOC, DOCX, JPG, PNG");
+        }
+
+        SupplierDocumentDTO document = supplierService.uploadDocument(id, file, documentType, documentName, expiryDate);
+        return ResponseEntity.status(HttpStatus.CREATED).body(document);
+    }
+
+    @GetMapping("/{id}/documents")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<SupplierDocumentDTO>> getSupplierDocuments(@PathVariable Long id) {
+        return ResponseEntity.ok(supplierService.getSupplierDocuments(id));
+    }
+
+    @DeleteMapping("/documents/{documentId}")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<Void> deleteDocument(@PathVariable Long documentId) {
+        supplierService.deleteDocument(documentId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/documents/{documentId}/download")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PHARMACY_STAFF', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<Resource> downloadDocument(@PathVariable Long documentId) {
+        // Use service instead of direct repository access
+        SupplierDocument document = supplierService.getDocumentById(documentId);
+
+        try {
+            Path filePath = Paths.get("." + document.getFilePath()).normalize();
+            Resource resource = new UrlResource(filePath.toUri());
+
+            if (!resource.exists()) {
+                throw new ResourceNotFoundException("File", "path", document.getFilePath());
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"" + document.getDocumentName() + "\"")
+                    .body(resource);
+
+        } catch (Exception e) {
+            throw new BusinessException("Could not download file: " + e.getMessage());
+        }
     }
 }
