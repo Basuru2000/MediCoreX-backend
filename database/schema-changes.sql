@@ -1581,6 +1581,57 @@ CREATE TABLE IF NOT EXISTS supplier_documents (
 
 
 -- =====================================================
+-- Date: 2024-XX-XX
+-- Feature: Supplier Product Catalog (Week 6 - Phase 1.2)
+-- Developer: Week 6 Implementation
+-- Status: PENDING
+-- =====================================================
+
+-- Supplier Product Catalog table
+CREATE TABLE IF NOT EXISTS supplier_products (
+                                                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                 supplier_id BIGINT NOT NULL,
+                                                 product_id BIGINT NOT NULL,
+                                                 supplier_product_code VARCHAR(100),
+                                                 supplier_product_name VARCHAR(200),
+                                                 unit_price DECIMAL(12,2) NOT NULL,
+                                                 currency VARCHAR(3) DEFAULT 'USD',
+                                                 discount_percentage DECIMAL(5,2) DEFAULT 0,
+                                                 bulk_discount_percentage DECIMAL(5,2) DEFAULT 0,
+                                                 bulk_quantity_threshold INT DEFAULT 0,
+                                                 lead_time_days INT DEFAULT 0,
+                                                 min_order_quantity INT DEFAULT 1,
+                                                 max_order_quantity INT,
+                                                 is_preferred BOOLEAN DEFAULT FALSE,
+                                                 is_active BOOLEAN DEFAULT TRUE,
+                                                 last_price_update DATE,
+                                                 notes TEXT,
+                                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                 FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                                                 FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+                                                 UNIQUE KEY unique_supplier_product (supplier_id, product_id),
+                                                 INDEX idx_product_supplier (product_id, supplier_id),
+                                                 INDEX idx_preferred (is_preferred, product_id),
+                                                 INDEX idx_active_products (is_active, supplier_id)
+);
+
+-- Price History table for tracking price changes
+CREATE TABLE IF NOT EXISTS supplier_product_price_history (
+                                                              id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                              supplier_product_id BIGINT NOT NULL,
+                                                              old_price DECIMAL(12,2),
+                                                              new_price DECIMAL(12,2) NOT NULL,
+                                                              change_percentage DECIMAL(5,2),
+                                                              changed_by BIGINT,
+                                                              change_reason VARCHAR(255),
+                                                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                              FOREIGN KEY (supplier_product_id) REFERENCES supplier_products(id) ON DELETE CASCADE,
+                                                              FOREIGN KEY (changed_by) REFERENCES users(id),
+                                                              INDEX idx_history_date (supplier_product_id, created_at DESC)
+);
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 

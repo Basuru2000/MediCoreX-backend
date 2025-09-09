@@ -1,4 +1,4 @@
-package com.medicorex.service;
+package com.medicorex.service.supplier;
 
 import com.medicorex.dto.*;
 import com.medicorex.entity.Supplier;

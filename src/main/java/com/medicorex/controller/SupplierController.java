@@ -4,7 +4,7 @@ import com.medicorex.dto.*;
 import com.medicorex.entity.SupplierDocument;
 import com.medicorex.exception.BusinessException;
 import com.medicorex.exception.ResourceNotFoundException;
-import com.medicorex.service.SupplierService;
+import com.medicorex.service.supplier.SupplierService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
