@@ -83,20 +83,23 @@ public class SupplierProduct {
     }
 
     // Calculate effective price based on quantity
-    public BigDecimal getEffectivePrice(int quantity) {
-        BigDecimal basePrice = unitPrice;
+    public BigDecimal getEffectivePrice(Integer quantity) {
+        BigDecimal basePrice = this.unitPrice;
 
         // Apply regular discount
-        if (discountPercentage != null && discountPercentage.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal discount = basePrice.multiply(discountPercentage).divide(new BigDecimal(100));
+        if (this.discountPercentage != null && this.discountPercentage.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal discount = basePrice.multiply(this.discountPercentage)
+                    .divide(new BigDecimal(100), 2, BigDecimal.ROUND_HALF_UP);
             basePrice = basePrice.subtract(discount);
         }
 
         // Apply bulk discount if applicable
-        if (quantity >= bulkQuantityThreshold && bulkDiscountPercentage != null &&
-                bulkDiscountPercentage.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal bulkDiscount = basePrice.multiply(bulkDiscountPercentage).divide(new BigDecimal(100));
-            basePrice = basePrice.subtract(bulkDiscount);
+        if (quantity != null && this.bulkQuantityThreshold != null && quantity >= this.bulkQuantityThreshold) {
+            if (this.bulkDiscountPercentage != null && this.bulkDiscountPercentage.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal bulkDiscount = basePrice.multiply(this.bulkDiscountPercentage)
+                        .divide(new BigDecimal(100), 2, BigDecimal.ROUND_HALF_UP);
+                basePrice = basePrice.subtract(bulkDiscount);
+            }
         }
 
         return basePrice.setScale(2, BigDecimal.ROUND_HALF_UP);
