@@ -10,4 +10,5 @@ import java.util.List;
 public interface SupplierDocumentRepository extends JpaRepository<SupplierDocument, Long> {
     List<SupplierDocument> findBySupplierId(Long supplierId);
     List<SupplierDocument> findByExpiryDateBefore(LocalDate date);
+    List<SupplierDocument> findBySupplierIdAndDocumentType(Long supplierId, String documentType);
 }

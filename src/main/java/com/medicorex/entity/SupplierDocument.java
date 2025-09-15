@@ -1,3 +1,4 @@
+// File: src/main/java/com/medicorex/entity/SupplierDocument.java
 package com.medicorex.entity;
 
 import jakarta.persistence.*;
@@ -23,13 +24,13 @@ public class SupplierDocument {
     @JsonIgnore
     private Supplier supplier;
 
-    @Column(name = "document_type", nullable = false, length = 50)
+    @Column(name = "document_type", length = 50)
     private String documentType;
 
-    @Column(name = "document_name", nullable = false, length = 200)
+    @Column(name = "document_name", nullable = false)
     private String documentName;
 
-    @Column(name = "file_path", length = 500)
+    @Column(name = "file_path", nullable = false)
     private String filePath;
 
     @Column(name = "file_size")
@@ -44,4 +45,12 @@ public class SupplierDocument {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @PreUpdate
+    public void preUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
 }

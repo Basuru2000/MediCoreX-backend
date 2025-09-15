@@ -1631,6 +1631,367 @@ CREATE TABLE IF NOT EXISTS supplier_product_price_history (
                                                               INDEX idx_history_date (supplier_product_id, created_at DESC)
 );
 
+
+-- =====================================================
+-- Date: [Current Date]
+-- Feature: Supplier Performance Metrics (Week 6 - Phase 1.3)
+-- Developer: Week 6 Implementation
+-- Status: FIXED FOR MYSQL COMPATIBILITY
+-- =====================================================
+
+-- Supplier Performance Metrics table
+CREATE TABLE IF NOT EXISTS supplier_metrics (
+                                                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                supplier_id BIGINT NOT NULL,
+                                                metric_month DATE NOT NULL,
+
+    -- Delivery Performance Metrics
+                                                total_deliveries INT DEFAULT 0,
+                                                on_time_deliveries INT DEFAULT 0,
+                                                late_deliveries INT DEFAULT 0,
+                                                early_deliveries INT DEFAULT 0,
+                                                delivery_performance_score DECIMAL(5,2) DEFAULT 0,
+
+    -- Quality Metrics
+                                                total_items_received INT DEFAULT 0,
+                                                accepted_items INT DEFAULT 0,
+                                                rejected_items INT DEFAULT 0,
+                                                quality_score DECIMAL(5,2) DEFAULT 0,
+
+    -- Pricing Metrics
+                                                average_price_variance DECIMAL(5,2) DEFAULT 0,
+                                                total_spend DECIMAL(12,2) DEFAULT 0,
+                                                cost_savings DECIMAL(12,2) DEFAULT 0,
+
+    -- Response Time Metrics
+                                                average_response_time_hours INT DEFAULT 0,
+                                                average_lead_time_days INT DEFAULT 0,
+
+    -- Compliance Metrics
+                                                compliance_score DECIMAL(5,2) DEFAULT 100,
+                                                documentation_accuracy DECIMAL(5,2) DEFAULT 100,
+
+    -- Overall Performance
+                                                overall_score DECIMAL(5,2) DEFAULT 0,
+                                                performance_trend ENUM('IMPROVING', 'STABLE', 'DECLINING') DEFAULT 'STABLE',
+
+    -- Timestamps
+                                                calculated_at TIMESTAMP NULL,
+                                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- Constraints
+                                                FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                                                UNIQUE KEY unique_supplier_month (supplier_id, metric_month),
+                                                INDEX idx_metric_month (metric_month),
+                                                INDEX idx_overall_score (overall_score),
+                                                INDEX idx_performance_trend (performance_trend)
+);
+
+-- Create supplier_documents table if missing
+CREATE TABLE IF NOT EXISTS supplier_documents (
+                                                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                  supplier_id BIGINT NOT NULL,
+                                                  document_type VARCHAR(50),
+                                                  document_name VARCHAR(255) NOT NULL,
+                                                  file_path VARCHAR(500) NOT NULL,
+                                                  file_size BIGINT,
+                                                  expiry_date DATE,
+                                                  uploaded_by BIGINT,
+                                                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                                  FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                                                  FOREIGN KEY (uploaded_by) REFERENCES users(id),
+                                                  INDEX idx_supplier_document (supplier_id),
+                                                  INDEX idx_document_expiry (expiry_date)
+);
+
+-- Create view for current month metrics
+CREATE OR REPLACE VIEW current_supplier_metrics AS
+SELECT
+    sm.*,
+    s.name as supplier_name,
+    s.code as supplier_code,
+    s.status as supplier_status
+FROM supplier_metrics sm
+         JOIN suppliers s ON sm.supplier_id = s.id
+WHERE sm.metric_month = DATE_FORMAT(CURRENT_DATE, '%Y-%m-01');
+
+-- Create view for supplier rankings
+CREATE OR REPLACE VIEW supplier_rankings AS
+SELECT
+    sm.supplier_id,
+    s.name as supplier_name,
+    sm.overall_score,
+    sm.delivery_performance_score,
+    sm.quality_score,
+    sm.compliance_score,
+    sm.performance_trend,
+    RANK() OVER (ORDER BY sm.overall_score DESC) as rank_overall,
+    RANK() OVER (ORDER BY sm.delivery_performance_score DESC) as rank_delivery,
+    RANK() OVER (ORDER BY sm.quality_score DESC) as rank_quality
+FROM supplier_metrics sm
+         JOIN suppliers s ON sm.supplier_id = s.id
+WHERE sm.metric_month = DATE_FORMAT(CURRENT_DATE, '%Y-%m-01')
+  AND s.status = 'ACTIVE';
+
+-- =====================================================
+-- Add rating column to suppliers table (MySQL compatible)
+-- =====================================================
+
+-- Drop procedure if exists (for re-running)
+DROP PROCEDURE IF EXISTS AddColumnIfNotExists;
+
+-- Create temporary procedure to add column if not exists
+DELIMITER $$
+CREATE PROCEDURE AddColumnIfNotExists()
+BEGIN
+    DECLARE column_exists INT DEFAULT 0;
+
+    -- Check if column exists
+    SELECT COUNT(*) INTO column_exists
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'suppliers'
+      AND COLUMN_NAME = 'rating';
+
+    -- Add column if it doesn't exist
+    IF column_exists = 0 THEN
+        ALTER TABLE suppliers
+            ADD COLUMN rating DECIMAL(3,2) DEFAULT 0 COMMENT 'Overall rating from 0-5 based on metrics';
+    END IF;
+END$$
+DELIMITER ;
+
+-- Execute the procedure
+CALL AddColumnIfNotExists();
+
+-- Drop the temporary procedure
+DROP PROCEDURE IF EXISTS AddColumnIfNotExists;
+
+-- =====================================================
+-- Create index for rating (MySQL compatible)
+-- =====================================================
+
+-- Drop procedure if exists
+DROP PROCEDURE IF EXISTS AddIndexIfNotExists;
+
+-- Create temporary procedure to add index if not exists
+DELIMITER $$
+CREATE PROCEDURE AddIndexIfNotExists()
+BEGIN
+    DECLARE index_exists INT DEFAULT 0;
+
+    -- Check if index exists
+    SELECT COUNT(*) INTO index_exists
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'suppliers'
+      AND INDEX_NAME = 'idx_supplier_rating';
+
+    -- Add index if it doesn't exist
+    IF index_exists = 0 THEN
+        CREATE INDEX idx_supplier_rating ON suppliers(rating);
+    END IF;
+END$$
+DELIMITER ;
+
+-- Execute the procedure
+CALL AddIndexIfNotExists();
+
+-- Drop the temporary procedure
+DROP PROCEDURE IF EXISTS AddIndexIfNotExists;
+
+-- =====================================================
+-- Create stored procedure to calculate monthly metrics
+-- =====================================================
+
+-- Drop existing procedure if exists
+DROP PROCEDURE IF EXISTS calculate_supplier_monthly_metrics;
+
+DELIMITER $$
+CREATE PROCEDURE calculate_supplier_monthly_metrics(
+    IN p_supplier_id BIGINT,
+    IN p_month DATE
+)
+BEGIN
+    DECLARE v_total_deliveries INT DEFAULT 0;
+    DECLARE v_on_time INT DEFAULT 0;
+    DECLARE v_total_items INT DEFAULT 0;
+    DECLARE v_accepted_items INT DEFAULT 0;
+    DECLARE v_total_spend DECIMAL(12,2) DEFAULT 0;
+    DECLARE v_overall_score DECIMAL(5,2) DEFAULT 0;
+
+    -- Set month to first day
+    SET p_month = DATE_FORMAT(p_month, '%Y-%m-01');
+
+    -- Calculate overall score
+    SET v_overall_score = (
+        IFNULL((SELECT delivery_performance_score FROM supplier_metrics
+                WHERE supplier_id = p_supplier_id AND metric_month = p_month), 0) * 0.30 +
+        IFNULL((SELECT quality_score FROM supplier_metrics
+                WHERE supplier_id = p_supplier_id AND metric_month = p_month), 0) * 0.35 +
+        IFNULL((SELECT compliance_score FROM supplier_metrics
+                WHERE supplier_id = p_supplier_id AND metric_month = p_month), 100) * 0.20 +
+        (100 - ABS(IFNULL((SELECT average_price_variance FROM supplier_metrics
+                           WHERE supplier_id = p_supplier_id AND metric_month = p_month), 0))) * 0.15
+        );
+
+    -- Update or insert metrics
+    INSERT INTO supplier_metrics (
+        supplier_id, metric_month, overall_score, calculated_at
+    ) VALUES (
+                 p_supplier_id, p_month, v_overall_score, NOW()
+             ) ON DUPLICATE KEY UPDATE
+                                    overall_score = v_overall_score,
+                                    calculated_at = NOW(),
+                                    updated_at = NOW();
+
+    -- Update supplier rating (0-5 scale)
+    UPDATE suppliers
+    SET rating = v_overall_score / 20
+    WHERE id = p_supplier_id;
+
+END$$
+DELIMITER ;
+
+-- =====================================================
+-- Create trigger to update performance trend
+-- =====================================================
+
+-- Drop existing trigger if exists
+DROP TRIGGER IF EXISTS update_performance_trend;
+
+DELIMITER $$
+CREATE TRIGGER update_performance_trend
+    BEFORE UPDATE ON supplier_metrics
+    FOR EACH ROW
+BEGIN
+    DECLARE v_previous_score DECIMAL(5,2);
+
+    -- Get previous month's score
+    SELECT overall_score INTO v_previous_score
+    FROM supplier_metrics
+    WHERE supplier_id = NEW.supplier_id
+      AND metric_month = DATE_SUB(NEW.metric_month, INTERVAL 1 MONTH)
+    LIMIT 1;
+
+    -- Set trend based on score change
+    IF v_previous_score IS NOT NULL THEN
+        IF NEW.overall_score > v_previous_score + 5 THEN
+            SET NEW.performance_trend = 'IMPROVING';
+        ELSEIF NEW.overall_score < v_previous_score - 5 THEN
+            SET NEW.performance_trend = 'DECLINING';
+        ELSE
+            SET NEW.performance_trend = 'STABLE';
+        END IF;
+    END IF;
+END$$
+DELIMITER ;
+
+-- =====================================================
+-- Insert sample test data
+-- =====================================================
+
+-- Insert test metrics for existing suppliers
+INSERT INTO supplier_metrics (
+    supplier_id,
+    metric_month,
+    total_deliveries,
+    on_time_deliveries,
+    delivery_performance_score,
+    total_items_received,
+    accepted_items,
+    quality_score,
+    compliance_score,
+    overall_score,
+    total_spend,
+    cost_savings,
+    average_price_variance,
+    calculated_at
+)
+SELECT
+    s.id,
+    DATE_FORMAT(CURRENT_DATE, '%Y-%m-01'),
+    10,
+    8,
+    80.00,
+    100,
+    95,
+    95.00,
+    100.00,
+    91.25,
+    50000.00,
+    1000.00,
+    -2.5,
+    NOW()
+FROM suppliers s
+WHERE s.status = 'ACTIVE'
+  AND NOT EXISTS (
+    SELECT 1 FROM supplier_metrics sm
+    WHERE sm.supplier_id = s.id
+      AND sm.metric_month = DATE_FORMAT(CURRENT_DATE, '%Y-%m-01')
+)
+LIMIT 1;
+
+-- Add historical data for testing (3 months back)
+INSERT INTO supplier_metrics (
+    supplier_id,
+    metric_month,
+    total_deliveries,
+    on_time_deliveries,
+    delivery_performance_score,
+    total_items_received,
+    accepted_items,
+    quality_score,
+    compliance_score,
+    overall_score,
+    performance_trend,
+    total_spend,
+    calculated_at
+)
+SELECT
+    s.id,
+    DATE_FORMAT(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH), '%Y-%m-01'),
+    12,
+    10,
+    83.33,
+    120,
+    110,
+    91.67,
+    100.00,
+    90.00,
+    'STABLE',
+    60000.00,
+    NOW()
+FROM suppliers s
+WHERE s.status = 'ACTIVE'
+  AND NOT EXISTS (
+    SELECT 1 FROM supplier_metrics sm
+    WHERE sm.supplier_id = s.id
+      AND sm.metric_month = DATE_FORMAT(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH), '%Y-%m-01')
+)
+LIMIT 1;
+
+-- 1. Disable safe mode temporarily
+SET SQL_SAFE_UPDATES = 0;
+
+-- 2. Update the ratings
+UPDATE suppliers s
+SET rating = IFNULL((
+                        SELECT overall_score / 20
+                        FROM supplier_metrics sm
+                        WHERE sm.supplier_id = s.id
+                        ORDER BY metric_month DESC
+                        LIMIT 1
+                    ), 0)
+WHERE id IN (SELECT DISTINCT supplier_id FROM supplier_metrics);
+
+-- 3. Re-enable safe mode
+SET SQL_SAFE_UPDATES = 1;
+
+
+
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
