@@ -19,6 +19,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import com.medicorex.exception.FileStorageException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -231,6 +237,95 @@ public class SupplierService {
             log.error("Failed to upload document: {}", e.getMessage());
             throw new BusinessException("Failed to upload document: " + e.getMessage());
         }
+    }
+
+    public ResponseEntity<Resource> downloadDocument(Long documentId) {
+        try {
+            SupplierDocument document = documentRepository.findById(documentId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Document", "id", documentId));
+
+            // Build file path
+            Path filePath = Paths.get("." + document.getFilePath()).normalize();
+            Resource resource = new UrlResource(filePath.toUri());
+
+            if (!resource.exists()) {
+                throw new FileStorageException("File not found: " + document.getDocumentName());
+            }
+
+            // Determine content type more accurately
+            String contentType = "application/octet-stream";
+            String fileName = document.getDocumentName();
+            String fileExtension = "";
+
+            if (fileName.contains(".")) {
+                fileExtension = fileName.substring(fileName.lastIndexOf(".") + 1).toLowerCase();
+            }
+
+            switch(fileExtension) {
+                case "pdf":
+                    contentType = "application/pdf";
+                    break;
+                case "doc":
+                    contentType = "application/msword";
+                    break;
+                case "docx":
+                    contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                    break;
+                case "xls":
+                    contentType = "application/vnd.ms-excel";
+                    break;
+                case "xlsx":
+                    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                    break;
+                case "jpg":
+                case "jpeg":
+                    contentType = "image/jpeg";
+                    break;
+                case "png":
+                    contentType = "image/png";
+                    break;
+                case "txt":
+                    contentType = "text/plain";
+                    break;
+            }
+
+            // ✅ FIX: Ensure filename includes extension
+            String downloadFileName = fileName;
+            if (!fileName.contains(".") && !fileExtension.isEmpty()) {
+                downloadFileName = fileName + "." + fileExtension;
+            }
+
+            // ✅ FIX: Set proper Content-Disposition with inline disposition for preview
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"" + downloadFileName + "\"")
+                    .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(resource.contentLength()))
+                    .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+                    .header(HttpHeaders.PRAGMA, "no-cache")
+                    .header(HttpHeaders.EXPIRES, "0")
+                    .body(resource);
+
+        } catch (Exception e) {
+            log.error("Error downloading document: {}", e.getMessage());
+            throw new FileStorageException("Could not download file", e);
+        }
+    }
+
+    public List<SupplierDocumentDTO> getExpiringDocuments(int daysAhead) {
+        LocalDate expiryDate = LocalDate.now().plusDays(daysAhead);
+        List<SupplierDocument> expiringDocs = documentRepository.findExpiringDocuments(expiryDate);
+
+        return expiringDocs.stream()
+                .map(this::convertDocumentToDTO)
+                .collect(Collectors.toList());
+    }
+
+    public List<SupplierDocumentDTO> getDocumentsByType(Long supplierId, String documentType) {
+        List<SupplierDocument> documents = documentRepository.findBySupplierIdAndType(supplierId, documentType);
+        return documents.stream()
+                .map(this::convertDocumentToDTO)
+                .collect(Collectors.toList());
     }
 
     public SupplierDocument getDocumentById(Long documentId) {

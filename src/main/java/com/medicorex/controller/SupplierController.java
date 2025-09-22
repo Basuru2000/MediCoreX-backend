@@ -191,4 +191,11 @@ public class SupplierController {
             throw new BusinessException("Could not download file: " + e.getMessage());
         }
     }
+
+    @GetMapping("/documents/expiring")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<SupplierDocumentDTO>> getExpiringDocuments(
+            @RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.ok(supplierService.getExpiringDocuments(days));
+    }
 }
