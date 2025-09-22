@@ -1991,6 +1991,30 @@ WHERE id IN (SELECT DISTINCT supplier_id FROM supplier_metrics);
 SET SQL_SAFE_UPDATES = 1;
 
 
+-- =====================================================
+-- Date: 2024-XX-XX
+-- Feature: Document Management Indexes and Updates
+-- Developer: Phase 1.4 Implementation
+-- Status: ACTIVE
+-- =====================================================
+
+-- Add indexes for better document query performance
+ALTER TABLE supplier_documents ADD INDEX idx_expiry_date (expiry_date);
+ALTER TABLE supplier_documents ADD INDEX idx_document_type (document_type);
+ALTER TABLE supplier_documents ADD INDEX idx_created_at (created_at DESC);
+
+-- Add document statistics view
+CREATE OR REPLACE VIEW supplier_document_stats AS
+SELECT
+    s.id as supplier_id,
+    s.name as supplier_name,
+    COUNT(DISTINCT sd.id) as total_documents,
+    COUNT(DISTINCT CASE WHEN sd.expiry_date < CURRENT_DATE THEN sd.id END) as expired_documents,
+    COUNT(DISTINCT CASE WHEN sd.expiry_date BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY) THEN sd.id END) as expiring_soon
+FROM suppliers s
+         LEFT JOIN supplier_documents sd ON s.id = sd.supplier_id
+GROUP BY s.id, s.name;
+
 
 -- =====================================================
 -- UPCOMING CHANGES
