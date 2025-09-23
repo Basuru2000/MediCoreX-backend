@@ -38,4 +38,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             "LOWER(p.barcode) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
             "LOWER(p.manufacturer) LIKE LOWER(CONCAT('%', :query, '%'))")
     Page<Product> searchProducts(@Param("query") String query, Pageable pageable);
+
+    // Method to get products with valid expiry dates for monitoring
+    @Query("SELECT p FROM Product p WHERE p.expiryDate IS NOT NULL AND p.quantity > 0")
+    List<Product> findProductsWithValidExpiryDates();
 }
