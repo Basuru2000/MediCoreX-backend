@@ -40,10 +40,8 @@ public class ExpiryAlertGenerator {
             return buildEmptyReport();
         }
 
-        // Get all products with expiry dates
-        List<Product> productsWithExpiry = productRepository.findAll().stream()
-                .filter(p -> p.getExpiryDate() != null && p.getQuantity() > 0)
-                .collect(Collectors.toList());
+        // Get all products with expiry dates and positive quantity using database query
+        List<Product> productsWithExpiry = productRepository.findProductsWithValidExpiryDates();
 
         log.info("Processing {} products with expiry dates", productsWithExpiry.size());
 
@@ -87,6 +85,12 @@ public class ExpiryAlertGenerator {
     private ProcessResult processProductExpiry(Product product, List<ExpiryAlertConfig> configs,
                                                LocalDate checkDate, Long checkLogId) {
         ProcessResult result = new ProcessResult();
+
+        // Additional safety check for null expiry date
+        if (product.getExpiryDate() == null) {
+            log.warn("Product {} has null expiry date, skipping alert generation", product.getId());
+            return result;
+        }
 
         // Calculate days until expiry
         long daysUntilExpiry = ChronoUnit.DAYS.between(checkDate, product.getExpiryDate());
@@ -138,12 +142,17 @@ public class ExpiryAlertGenerator {
      */
     private ExpiryAlert createAlert(Product product, ExpiryAlertConfig config,
                                     LocalDate alertDate, Long checkLogId) {
+        // Validate that product has expiry date - this should not happen if filtering is correct
+        if (product.getExpiryDate() == null) {
+            throw new IllegalArgumentException("Cannot create alert for product without expiry date: " + product.getId());
+        }
+
         ExpiryAlert alert = new ExpiryAlert();
         alert.setProduct(product);
         alert.setConfig(config);
         alert.setBatchNumber(product.getBatchNumber());
         alert.setAlertDate(alertDate);
-        alert.setExpiryDate(product.getExpiryDate());
+        alert.setExpiryDate(product.getExpiryDate()); // This is now guaranteed to be non-null
         alert.setQuantityAffected(product.getQuantity());
         alert.setStatus(ExpiryAlert.AlertStatus.PENDING);
 

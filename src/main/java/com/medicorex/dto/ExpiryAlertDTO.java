@@ -19,18 +19,20 @@ public class ExpiryAlertDTO {
     private Long productId;
     private String productName;
     private String productCode;
+    private Long batchId;
     private String batchNumber;
     private Long configId;
-    private String tierName;
-    private AlertSeverity severity;
+    private String configName;
+    private String severity;
     private LocalDate alertDate;
     private LocalDate expiryDate;
     private Integer quantityAffected;
-    private AlertStatus status;
-    private String acknowledgedByName;
+    private String status;
+    private String acknowledgedBy;
     private LocalDateTime acknowledgedAt;
     private String notes;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
     // Computed fields
     private Integer daysUntilExpiry;

@@ -212,17 +212,23 @@ public class BatchExpiryTrackingService {
     }
 
     // Helper methods
-    // FIX: Update createBatchAlert method to not use non-existent fields
+    // FIX: Update createBatchAlert method to set all required fields including expiry_date
     private void createBatchAlert(ProductBatch batch, ExpiryAlertConfig config, LocalDate checkDate, int daysBeforeExpiry) {
+        // Validate batch has expiry date
+        if (batch.getExpiryDate() == null) {
+            log.warn("Cannot create alert for batch {} without expiry date", batch.getBatchNumber());
+            return;
+        }
+
         ExpiryAlert alert = new ExpiryAlert();
         alert.setProduct(batch.getProduct());
         alert.setBatch(batch);
         alert.setConfig(config);
         alert.setAlertDate(checkDate);
-        // Don't set daysBeforeExpiry if the field doesn't exist
-        // alert.setDaysBeforeExpiry(daysBeforeExpiry);
+        alert.setExpiryDate(batch.getExpiryDate()); // Set the required expiry_date field
+        alert.setBatchNumber(batch.getBatchNumber()); // Set batch number
+        alert.setQuantityAffected(batch.getQuantity()); // Set quantity affected
         alert.setStatus(ExpiryAlert.AlertStatus.PENDING);
-        alert.setCreatedAt(java.time.LocalDateTime.now());
 
         alertRepository.save(alert);
 

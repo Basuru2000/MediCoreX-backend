@@ -56,4 +56,11 @@ public interface ExpiryAlertRepository extends JpaRepository<ExpiryAlert, Long> 
             "ORDER BY a.expiryDate, a.config.severity")
     List<ExpiryAlert> findByExpiryDateBetween(@Param("startDate") LocalDate startDate,
                                               @Param("endDate") LocalDate endDate);
+
+    // Methods needed by ExpiryAlertService
+    Page<ExpiryAlert> findByStatusOrderByAlertDateDesc(ExpiryAlert.AlertStatus status, Pageable pageable);
+    
+    Page<ExpiryAlert> findAllByOrderByAlertDateDesc(Pageable pageable);
+    
+    List<ExpiryAlert> findTop10ByStatusOrderByAlertDateAsc(ExpiryAlert.AlertStatus status);
 }
