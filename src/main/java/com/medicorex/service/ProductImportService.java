@@ -68,8 +68,8 @@ public class ProductImportService {
      */
     private ImportResultDTO importFromCSV(MultipartFile file) throws IOException {
         List<ImportErrorDTO> errors = new ArrayList<>();
-        List<Product> successfulImports = new ArrayList<>();
-        int rowNumber = 0;
+        List<Product> validProducts = new ArrayList<>();
+        int totalRows = 0;
 
         try (CSVReader csvReader = new CSVReader(new InputStreamReader(file.getInputStream()))) {
             List<String[]> records = csvReader.readAll();
@@ -79,9 +79,10 @@ public class ProductImportService {
                 return new ImportResultDTO(0, 0, 0, errors);
             }
 
-            // Skip header row
+            // First pass: Parse and validate all products without saving
             for (int i = 1; i < records.size(); i++) {
-                rowNumber = i + 1;
+                int rowNumber = i + 1;
+                totalRows++;
                 String[] row = records.get(i);
 
                 // Skip empty rows
@@ -92,27 +93,58 @@ public class ProductImportService {
                 try {
                     Product product = parseProductFromCSV(row, rowNumber);
                     if (product != null) {
-                        successfulImports.add(product);
+                        validProducts.add(product);
                     }
                 } catch (Exception e) {
                     errors.add(new ImportErrorDTO(rowNumber, e.getMessage()));
+                    log.error("Error parsing CSV row {}: {}", rowNumber, e.getMessage());
                 }
             }
 
-            // Save all successful imports
-            productRepository.saveAll(successfulImports);
-            entityManager.flush();
+            // If there are any parsing errors, return without saving anything
+            if (!errors.isEmpty()) {
+                log.warn("CSV import aborted due to {} validation errors. No products were saved.", errors.size());
+                return new ImportResultDTO(totalRows, 0, errors.size(), errors);
+            }
+
+            // Second pass: Save all valid products in batch
+            List<Product> successfulImports = new ArrayList<>();
+            try {
+                for (Product product : validProducts) {
+                    // Save product to get ID
+                    Product savedProduct = productRepository.save(product);
+
+                    // Generate barcode if not provided
+                    if (savedProduct.getBarcode() == null || savedProduct.getBarcode().isEmpty()) {
+                        savedProduct.setBarcode(barcodeService.generateBarcode(savedProduct));
+                        productRepository.save(savedProduct);
+                    }
+
+                    successfulImports.add(savedProduct);
+                }
+
+                // Flush all changes to database
+                entityManager.flush();
+                log.info("CSV import completed successfully: {} products imported", successfulImports.size());
+
+                return new ImportResultDTO(
+                        totalRows,
+                        successfulImports.size(),
+                        0,
+                        errors
+                );
+
+            } catch (Exception e) {
+                log.error("Error during CSV batch save operation: {}", e.getMessage());
+                errors.add(new ImportErrorDTO(0, "Database error during import: " + e.getMessage()));
+                return new ImportResultDTO(totalRows, 0, 1, errors);
+            }
 
         } catch (CsvException e) {
+            log.error("CSV parsing error: {}", e.getMessage());
             errors.add(new ImportErrorDTO(0, "CSV parsing error: " + e.getMessage()));
+            return new ImportResultDTO(0, 0, 1, errors);
         }
-
-        return new ImportResultDTO(
-                rowNumber - 1, // Total rows (excluding header)
-                successfulImports.size(),
-                errors.size(),
-                errors
-        );
     }
 
     /**
@@ -120,7 +152,7 @@ public class ProductImportService {
      */
     private ImportResultDTO importFromExcel(MultipartFile file) throws IOException {
         List<ImportErrorDTO> errors = new ArrayList<>();
-        List<Product> successfulImports = new ArrayList<>();
+        List<Product> validProducts = new ArrayList<>();
         int totalRows = 0;
 
         try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
@@ -138,6 +170,7 @@ public class ProductImportService {
                 rowIterator.next();
             }
 
+            // First pass: Parse and validate all products without saving
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
                 int rowNumber = row.getRowNum() + 1;
@@ -151,35 +184,53 @@ public class ProductImportService {
                 try {
                     Product product = parseProductFromExcel(row, rowNumber);
                     if (product != null) {
-                        // Save immediately to get ID for barcode generation
-                        Product savedProduct = productRepository.save(product);
-
-                        // Generate barcode if not provided
-                        if (savedProduct.getBarcode() == null || savedProduct.getBarcode().isEmpty()) {
-                            savedProduct.setBarcode(barcodeService.generateBarcode(savedProduct));
-                            savedProduct = productRepository.save(savedProduct);
-                        }
-
-                        successfulImports.add(savedProduct);
+                        validProducts.add(product);
                     }
                 } catch (Exception e) {
                     errors.add(new ImportErrorDTO(rowNumber, e.getMessage()));
-                    log.error("Error importing row {}: {}", rowNumber, e.getMessage());
+                    log.error("Error parsing row {}: {}", rowNumber, e.getMessage());
                 }
             }
 
-            // Flush to ensure all products are persisted
-            entityManager.flush();
+            // If there are any parsing errors, return without saving anything
+            if (!errors.isEmpty()) {
+                log.warn("Import aborted due to {} validation errors. No products were saved.", errors.size());
+                return new ImportResultDTO(totalRows, 0, errors.size(), errors);
+            }
+
+            // Second pass: Save all valid products in batch
+            List<Product> successfulImports = new ArrayList<>();
+            try {
+                for (Product product : validProducts) {
+                    // Save product to get ID
+                    Product savedProduct = productRepository.save(product);
+
+                    // Generate barcode if not provided
+                    if (savedProduct.getBarcode() == null || savedProduct.getBarcode().isEmpty()) {
+                        savedProduct.setBarcode(barcodeService.generateBarcode(savedProduct));
+                        productRepository.save(savedProduct);
+                    }
+
+                    successfulImports.add(savedProduct);
+                }
+
+                // Flush all changes to database
+                entityManager.flush();
+                log.info("Excel import completed successfully: {} products imported", successfulImports.size());
+
+            } catch (Exception e) {
+                log.error("Error during batch save operation: {}", e.getMessage());
+                errors.add(new ImportErrorDTO(0, "Database error during import: " + e.getMessage()));
+                return new ImportResultDTO(totalRows, 0, 1, errors);
+            }
+
+            return new ImportResultDTO(
+                    totalRows,
+                    successfulImports.size(),
+                    0,
+                    errors
+            );
         }
-
-        log.info("Excel import completed: {} successful, {} errors", successfulImports.size(), errors.size());
-
-        return new ImportResultDTO(
-                totalRows,
-                successfulImports.size(),
-                errors.size(),
-                errors
-        );
     }
 
     /**
