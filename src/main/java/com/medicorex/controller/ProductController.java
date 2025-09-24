@@ -250,28 +250,58 @@ public class ProductController {
             // Validate file
             if (file.isEmpty()) {
                 return ResponseEntity.badRequest()
-                        .body(new ImportResultDTO(0, 0, 0,
+                        .body(new ImportResultDTO(0, 0, 1,
                                 List.of(new ImportErrorDTO(0, "File is empty"))));
             }
 
             // Check file size (max 10MB)
             if (file.getSize() > 10 * 1024 * 1024) {
                 return ResponseEntity.badRequest()
-                        .body(new ImportResultDTO(0, 0, 0,
+                        .body(new ImportResultDTO(0, 0, 1,
                                 List.of(new ImportErrorDTO(0, "File size exceeds 10MB limit"))));
             }
 
+            // Validate file extension
+            String filename = file.getOriginalFilename();
+            if (filename == null) {
+                return ResponseEntity.badRequest()
+                        .body(new ImportResultDTO(0, 0, 1,
+                                List.of(new ImportErrorDTO(0, "File name is missing"))));
+            }
+
+            String extension = filename.substring(filename.lastIndexOf(".") + 1).toLowerCase();
+            if (!"csv".equals(extension) && !"xlsx".equals(extension) && !"xls".equals(extension)) {
+                return ResponseEntity.badRequest()
+                        .body(new ImportResultDTO(0, 0, 1,
+                                List.of(new ImportErrorDTO(0, "Unsupported file format. Please upload CSV or Excel file."))));
+            }
+
             ImportResultDTO result = importService.importProducts(file);
-            return ResponseEntity.ok(result);
+
+            // Return appropriate HTTP status based on result
+            if (result.getFailedImports() > 0 && result.getSuccessfulImports() == 0) {
+                // All imports failed
+                return ResponseEntity.badRequest().body(result);
+            } else if (result.getFailedImports() > 0) {
+                // Partial success
+                return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT).body(result);
+            } else {
+                // All successful
+                return ResponseEntity.ok(result);
+            }
 
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
-                    .body(new ImportResultDTO(0, 0, 0,
+                    .body(new ImportResultDTO(0, 0, 1,
                             List.of(new ImportErrorDTO(0, e.getMessage()))));
         } catch (IOException e) {
             return ResponseEntity.internalServerError()
-                    .body(new ImportResultDTO(0, 0, 0,
+                    .body(new ImportResultDTO(0, 0, 1,
                             List.of(new ImportErrorDTO(0, "File processing error: " + e.getMessage()))));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(new ImportResultDTO(0, 0, 1,
+                            List.of(new ImportErrorDTO(0, "Unexpected error during import: " + e.getMessage()))));
         }
     }
 }
