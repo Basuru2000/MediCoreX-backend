@@ -101,4 +101,43 @@ public class PurchaseOrderController {
     public ResponseEntity<PurchaseOrderSummaryDTO> getPurchaseOrderSummary() {
         return ResponseEntity.ok(purchaseOrderService.getPurchaseOrderSummary());
     }
+
+    @PostMapping("/{id}/approve")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<PurchaseOrderDTO> approvePurchaseOrder(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) PurchaseOrderApprovalDTO approvalDTO) {
+
+        if (approvalDTO == null) {
+            approvalDTO = new PurchaseOrderApprovalDTO();
+        }
+
+        return ResponseEntity.ok(purchaseOrderService.approvePurchaseOrder(id, approvalDTO));
+    }
+
+    @PostMapping("/{id}/reject")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<PurchaseOrderDTO> rejectPurchaseOrder(
+            @PathVariable Long id,
+            @Valid @RequestBody PurchaseOrderApprovalDTO rejectionDTO) {
+
+        return ResponseEntity.ok(purchaseOrderService.rejectPurchaseOrder(id, rejectionDTO));
+    }
+
+    @GetMapping("/pending-approvals")
+    @PreAuthorize("hasRole('HOSPITAL_MANAGER')")
+    public ResponseEntity<PageResponseDTO<PurchaseOrderDTO>> getPendingApprovals(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "orderDate"));
+        return ResponseEntity.ok(purchaseOrderService.getPendingApprovals(pageable));
+    }
+
+    @PostMapping("/{id}/request-approval")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<Void> requestApproval(@PathVariable Long id) {
+        purchaseOrderService.requestApproval(id);
+        return ResponseEntity.ok().build();
+    }
 }

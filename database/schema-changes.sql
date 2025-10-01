@@ -2096,6 +2096,78 @@ GROUP BY po.id, po.po_number, po.status, po.total_amount;
 -- END OF PURCHASE ORDER SCHEMA CHANGES
 -- =====================================================
 
+-- =====================================================
+-- Date: 2025-01-02
+-- Feature: Purchase Order Approval Process - Phase 2.2
+-- Developer: Phase 2.2 Implementation
+-- Status: ACTIVE
+-- =====================================================
+
+-- Add rejection comments field to purchase_orders table
+ALTER TABLE purchase_orders
+    ADD COLUMN rejection_comments TEXT AFTER approved_date;
+
+-- Add index for better query performance on approval status
+CREATE INDEX idx_po_approval_status ON purchase_orders(status, approved_by);
+
+-- Create view for pending approvals (for quick manager dashboard)
+CREATE OR REPLACE VIEW pending_po_approvals AS
+SELECT
+    po.id,
+    po.po_number,
+    po.supplier_id,
+    s.name as supplier_name,
+    po.order_date,
+    po.total_amount,
+    po.created_by,
+    u.full_name as created_by_name,
+    po.created_at,
+    COUNT(pol.id) as line_items_count
+FROM purchase_orders po
+         INNER JOIN suppliers s ON po.supplier_id = s.id
+         INNER JOIN users u ON po.created_by = u.id
+         LEFT JOIN purchase_order_lines pol ON po.id = pol.po_id
+WHERE po.status = 'DRAFT'
+GROUP BY po.id, po.po_number, po.supplier_id, s.name, po.order_date,
+         po.total_amount, po.created_by, u.full_name, po.created_at;
+
+-- =====================================================
+-- END OF APPROVAL PROCESS SCHEMA CHANGES
+-- =====================================================
+-- =====================================================
+-- Notification Templates for PO Approval Process
+-- =====================================================
+
+-- Template for approval request
+INSERT INTO notification_templates (code, title_template, message_template, category, priority, active)
+VALUES
+    ('PO_APPROVAL_REQUEST',
+     'Purchase Order Approval Required: {{poNumber}}',
+     'A new purchase order {{poNumber}} from {{supplierName}} worth ${{amount}} has been created by {{createdBy}} and requires your approval.',
+     'PROCUREMENT',
+     'HIGH',
+     true),
+
+    ('PO_APPROVED',
+     'Purchase Order Approved: {{poNumber}}',
+     'Your purchase order {{poNumber}} has been approved by {{approverName}}. {{#comments}}Comments: {{comments}}{{/comments}}',
+     'PROCUREMENT',
+     'MEDIUM',
+     true),
+
+    ('PO_REJECTED',
+     'Purchase Order Rejected: {{poNumber}}',
+     'Your purchase order {{poNumber}} has been rejected by {{approverName}}. Reason: {{comments}}',
+     'PROCUREMENT',
+     'HIGH',
+     true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template);
+
+
+
+
 
 
 -- =====================================================

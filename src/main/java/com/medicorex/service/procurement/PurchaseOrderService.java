@@ -6,6 +6,7 @@ import com.medicorex.entity.PurchaseOrder.POStatus;
 import com.medicorex.exception.BusinessException;
 import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
+import com.medicorex.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -19,7 +20,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -34,6 +37,7 @@ public class PurchaseOrderService {
     private final ProductRepository productRepository;
     private final SupplierProductRepository supplierProductRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     /**
      * Create new purchase order
@@ -220,6 +224,182 @@ public class PurchaseOrderService {
                 .build();
     }
 
+    /**
+     * Approve purchase order
+     */
+    public PurchaseOrderDTO approvePurchaseOrder(Long id, PurchaseOrderApprovalDTO approvalDTO) {
+        log.info("Approving purchase order ID: {}", id);
+
+        PurchaseOrder po = purchaseOrderRepository.findByIdWithDetails(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", id));
+
+        // Validate current status
+        if (po.getStatus() != POStatus.DRAFT) {
+            throw new BusinessException("Only DRAFT purchase orders can be approved. Current status: " + po.getStatus());
+        }
+
+        // Get current user (manager)
+        User currentUser = getCurrentUser();
+
+        // Validate user has manager role
+        if (!currentUser.getRole().equals(User.UserRole.HOSPITAL_MANAGER)) {
+            throw new BusinessException("Only Hospital Managers can approve purchase orders");
+        }
+
+        // Update approval details
+        po.setApprovedBy(currentUser);
+        po.setApprovedDate(LocalDateTime.now());
+        po.setStatus(POStatus.APPROVED);
+        po.setRejectionComments(null); // Clear any previous rejection comments
+
+        PurchaseOrder approvedPo = purchaseOrderRepository.save(po);
+        log.info("Purchase order {} approved by {}", po.getPoNumber(), currentUser.getUsername());
+
+        // Send notification to creator
+        sendApprovalNotification(approvedPo, true, approvalDTO.getComments());
+
+        return convertToDTO(approvedPo);
+    }
+
+    /**
+     * Reject purchase order
+     */
+    public PurchaseOrderDTO rejectPurchaseOrder(Long id, PurchaseOrderApprovalDTO rejectionDTO) {
+        log.info("Rejecting purchase order ID: {}", id);
+
+        PurchaseOrder po = purchaseOrderRepository.findByIdWithDetails(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", id));
+
+        // Validate current status
+        if (po.getStatus() != POStatus.DRAFT) {
+            throw new BusinessException("Only DRAFT purchase orders can be rejected. Current status: " + po.getStatus());
+        }
+
+        // Get current user (manager)
+        User currentUser = getCurrentUser();
+
+        // Validate user has manager role
+        if (!currentUser.getRole().equals(User.UserRole.HOSPITAL_MANAGER)) {
+            throw new BusinessException("Only Hospital Managers can reject purchase orders");
+        }
+
+        // Validate rejection comments are provided
+        if (rejectionDTO.getComments() == null || rejectionDTO.getComments().trim().isEmpty()) {
+            throw new BusinessException("Rejection comments are required");
+        }
+
+        // Update rejection details
+        po.setApprovedBy(currentUser);
+        po.setApprovedDate(LocalDateTime.now());
+        po.setRejectionComments(rejectionDTO.getComments());
+        po.setStatus(POStatus.CANCELLED);
+
+        PurchaseOrder rejectedPo = purchaseOrderRepository.save(po);
+        log.info("Purchase order {} rejected by {}", po.getPoNumber(), currentUser.getUsername());
+
+        // Send notification to creator
+        sendApprovalNotification(rejectedPo, false, rejectionDTO.getComments());
+
+        return convertToDTO(rejectedPo);
+    }
+
+    /**
+     * Get pending approval purchase orders (DRAFT status)
+     */
+    @Transactional(readOnly = true)
+    public PageResponseDTO<PurchaseOrderDTO> getPendingApprovals(Pageable pageable) {
+        Page<PurchaseOrder> poPage = purchaseOrderRepository.findByStatus(POStatus.DRAFT, pageable);
+        return convertToPageResponse(poPage);
+    }
+
+    /**
+     * Request approval for purchase order (sends notification to managers)
+     */
+    public void requestApproval(Long id) {
+        log.info("Requesting approval for purchase order ID: {}", id);
+
+        PurchaseOrder po = purchaseOrderRepository.findByIdWithDetails(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", id));
+
+        if (po.getStatus() != POStatus.DRAFT) {
+            throw new BusinessException("Only DRAFT purchase orders can request approval");
+        }
+
+        // Send notification to all hospital managers
+        sendApprovalRequestNotification(po);
+
+        log.info("Approval request sent for PO: {}", po.getPoNumber());
+    }
+
+    /**
+     * Send approval request notification to managers
+     */
+    private void sendApprovalRequestNotification(PurchaseOrder po) {
+        try {
+            // Get all hospital managers
+            List<User> managers = userRepository.findByRole(User.UserRole.HOSPITAL_MANAGER);
+
+            for (User manager : managers) {
+                Map<String, String> params = new HashMap<>();
+                params.put("poNumber", po.getPoNumber());
+                params.put("supplierName", po.getSupplier().getName());
+                params.put("amount", po.getTotalAmount().toString());
+                params.put("createdBy", po.getCreatedBy().getFullName());
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("poId", po.getId());
+                actionData.put("type", "PO_APPROVAL_REQUEST");
+
+                // Create notification for each manager
+                notificationService.createNotificationFromTemplate(
+                        manager.getId(),
+                        "PO_APPROVAL_REQUEST",
+                        params,
+                        actionData
+                );
+            }
+
+            log.info("Approval request notifications sent for PO: {}", po.getPoNumber());
+        } catch (Exception e) {
+            log.error("Failed to send approval request notification for PO {}: {}",
+                    po.getPoNumber(), e.getMessage());
+        }
+    }
+
+    /**
+     * Send approval/rejection notification to PO creator
+     */
+    private void sendApprovalNotification(PurchaseOrder po, boolean approved, String comments) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("poNumber", po.getPoNumber());
+            params.put("approverName", po.getApprovedBy().getFullName());
+            params.put("status", approved ? "APPROVED" : "REJECTED");
+
+            if (comments != null && !comments.isEmpty()) {
+                params.put("comments", comments);
+            }
+
+            Map<String, Object> actionData = new HashMap<>();
+            actionData.put("poId", po.getId());
+            actionData.put("type", approved ? "PO_APPROVED" : "PO_REJECTED");
+
+            String templateCode = approved ? "PO_APPROVED" : "PO_REJECTED";
+
+            notificationService.createNotificationFromTemplate(
+                    po.getCreatedBy().getId(),
+                    templateCode,
+                    params,
+                    actionData
+            );
+
+            log.info("{} notification sent for PO: {}", approved ? "Approval" : "Rejection", po.getPoNumber());
+        } catch (Exception e) {
+            log.error("Failed to send {} notification for PO {}: {}",
+                    approved ? "approval" : "rejection", po.getPoNumber(), e.getMessage());
+        }
+    }
+
     // ==================== HELPER METHODS ====================
 
     /**
@@ -351,6 +531,7 @@ public class PurchaseOrderService {
                 .approvedById(po.getApprovedBy() != null ? po.getApprovedBy().getId() : null)
                 .approvedByName(po.getApprovedBy() != null ? po.getApprovedBy().getFullName() : null)
                 .approvedDate(po.getApprovedDate())
+                .rejectionComments(po.getRejectionComments())
                 .createdAt(po.getCreatedAt())
                 .updatedAt(po.getUpdatedAt())
                 .lines(lineDTOs)
