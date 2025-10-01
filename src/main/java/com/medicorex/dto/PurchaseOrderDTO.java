@@ -34,6 +34,7 @@ public class PurchaseOrderDTO {
     private Long approvedById;
     private String approvedByName;
     private LocalDateTime approvedDate;
+    private String rejectionComments;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private List<PurchaseOrderLineDTO> lines;

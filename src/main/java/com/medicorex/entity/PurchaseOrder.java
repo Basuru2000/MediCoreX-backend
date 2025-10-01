@@ -64,6 +64,9 @@ public class PurchaseOrder {
     @Column(name = "approved_date")
     private LocalDateTime approvedDate;
 
+    @Column(name = "rejection_comments", columnDefinition = "TEXT")
+    private String rejectionComments;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
