@@ -13,6 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/purchase-orders")
 @RequiredArgsConstructor
@@ -139,5 +141,21 @@ public class PurchaseOrderController {
     public ResponseEntity<Void> requestApproval(@PathVariable Long id) {
         purchaseOrderService.requestApproval(id);
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{id}/status-history")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER', 'PHARMACY_STAFF')")
+    public ResponseEntity<List<StatusHistoryDTO>> getStatusHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(purchaseOrderService.getStatusHistory(id));
+    }
+
+    @PutMapping("/{id}/status-with-comments")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<PurchaseOrderDTO> updateStatusWithComments(
+            @PathVariable Long id,
+            @RequestParam POStatus status,
+            @RequestParam(required = false) String comments) {
+
+        return ResponseEntity.ok(purchaseOrderService.updateStatusWithComments(id, status, comments));
     }
 }

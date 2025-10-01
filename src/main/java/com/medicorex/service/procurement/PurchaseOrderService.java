@@ -38,6 +38,7 @@ public class PurchaseOrderService {
     private final SupplierProductRepository supplierProductRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final PurchaseOrderStatusHistoryRepository statusHistoryRepository;
 
     /**
      * Create new purchase order
@@ -76,6 +77,9 @@ public class PurchaseOrderService {
 
         PurchaseOrder savedPo = purchaseOrderRepository.save(po);
         log.info("Created purchase order: {}", savedPo.getPoNumber());
+
+        // Record initial status
+        recordStatusChange(savedPo, null, POStatus.DRAFT, "Purchase order created");
 
         return convertToDTO(savedPo);
     }
@@ -182,7 +186,7 @@ public class PurchaseOrderService {
     }
 
     /**
-     * Update PO status
+     * Update PO status and record history
      */
     public PurchaseOrderDTO updateStatus(Long id, POStatus newStatus) {
         log.info("Updating PO {} status to {}", id, newStatus);
@@ -190,13 +194,19 @@ public class PurchaseOrderService {
         PurchaseOrder po = purchaseOrderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", id));
 
-        // Validate status transition
-        validateStatusTransition(po.getStatus(), newStatus);
+        POStatus oldStatus = po.getStatus();
 
+        // Validate status transition
+        validateStatusTransition(oldStatus, newStatus);
+
+        // Update status
         po.setStatus(newStatus);
         PurchaseOrder updatedPo = purchaseOrderRepository.save(po);
 
-        log.info("Updated PO {} status to {}", po.getPoNumber(), newStatus);
+        // Record status change in history
+        recordStatusChange(po, oldStatus, newStatus, null);
+
+        log.info("Updated PO {} status from {} to {}", po.getPoNumber(), oldStatus, newStatus);
         return convertToDTO(updatedPo);
     }
 
@@ -249,10 +259,16 @@ public class PurchaseOrderService {
         // Update approval details
         po.setApprovedBy(currentUser);
         po.setApprovedDate(LocalDateTime.now());
-        po.setStatus(POStatus.APPROVED);
         po.setRejectionComments(null); // Clear any previous rejection comments
-
+        po.setStatus(POStatus.APPROVED);
         PurchaseOrder approvedPo = purchaseOrderRepository.save(po);
+
+        // Record status change with approval comments
+        String statusComments = approvalDTO.getComments() != null && !approvalDTO.getComments().isEmpty()
+                ? "Approved with comments: " + approvalDTO.getComments()
+                : "Purchase order approved";
+        recordStatusChange(approvedPo, POStatus.DRAFT, POStatus.APPROVED, statusComments);
+
         log.info("Purchase order {} approved by {}", po.getPoNumber(), currentUser.getUsername());
 
         // Send notification to creator
@@ -293,8 +309,12 @@ public class PurchaseOrderService {
         po.setApprovedDate(LocalDateTime.now());
         po.setRejectionComments(rejectionDTO.getComments());
         po.setStatus(POStatus.CANCELLED);
-
         PurchaseOrder rejectedPo = purchaseOrderRepository.save(po);
+
+        // Record status change with rejection reason
+        recordStatusChange(rejectedPo, POStatus.DRAFT, POStatus.CANCELLED,
+                "Rejected: " + rejectionDTO.getComments());
+
         log.info("Purchase order {} rejected by {}", po.getPoNumber(), currentUser.getUsername());
 
         // Send notification to creator
@@ -427,6 +447,131 @@ public class PurchaseOrderService {
                     e.getMessage(), e);
             // Don't throw exception - notification failure shouldn't break the approval process
         }
+    }
+
+    /**
+     * Update PO status with comments
+     */
+    public PurchaseOrderDTO updateStatusWithComments(Long id, POStatus newStatus, String comments) {
+        log.info("Updating PO {} status to {} with comments", id, newStatus);
+
+        PurchaseOrder po = purchaseOrderRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", id));
+
+        POStatus oldStatus = po.getStatus();
+
+        // Validate status transition
+        validateStatusTransition(oldStatus, newStatus);
+
+        // Update status
+        po.setStatus(newStatus);
+        PurchaseOrder updatedPo = purchaseOrderRepository.save(po);
+
+        // Record status change in history with comments
+        recordStatusChange(po, oldStatus, newStatus, comments);
+
+        log.info("Updated PO {} status from {} to {} with comments", po.getPoNumber(), oldStatus, newStatus);
+        return convertToDTO(updatedPo);
+    }
+
+    /**
+     * Get status history for a purchase order
+     */
+    @Transactional(readOnly = true)
+    public List<StatusHistoryDTO> getStatusHistory(Long poId) {
+        log.info("Fetching status history for PO ID: {}", poId);
+
+        // Verify PO exists
+        if (!purchaseOrderRepository.existsById(poId)) {
+            throw new ResourceNotFoundException("Purchase Order", "id", poId);
+        }
+
+        List<PurchaseOrderStatusHistory> history = statusHistoryRepository.findByPoIdOrderByChangedAtDesc(poId);
+
+        return history.stream()
+                .map(this::convertStatusHistoryToDTO)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Record status change in history
+     */
+    private void recordStatusChange(PurchaseOrder po, POStatus oldStatus, POStatus newStatus, String comments) {
+        try {
+            User currentUser = getCurrentUser();
+
+            PurchaseOrderStatusHistory history = PurchaseOrderStatusHistory.builder()
+                    .poId(po.getId())
+                    .poNumber(po.getPoNumber())
+                    .oldStatus(oldStatus)
+                    .newStatus(newStatus)
+                    .changedBy(currentUser.getId())
+                    .changedByName(currentUser.getFullName())
+                    .changedAt(LocalDateTime.now())
+                    .comments(comments)
+                    .build();
+
+            statusHistoryRepository.save(history);
+            log.info("✅ Recorded status change for PO {}: {} → {}", po.getPoNumber(), oldStatus, newStatus);
+
+        } catch (Exception e) {
+            log.error("❌ Failed to record status change for PO {}: {}", po.getPoNumber(), e.getMessage());
+            // Don't throw exception - status change should not fail if history recording fails
+        }
+    }
+
+    /**
+     * Convert StatusHistory entity to DTO
+     */
+    private StatusHistoryDTO convertStatusHistoryToDTO(PurchaseOrderStatusHistory history) {
+        String description = buildStatusChangeDescription(history.getOldStatus(), history.getNewStatus());
+
+        return StatusHistoryDTO.builder()
+                .id(history.getId())
+                .poId(history.getPoId())
+                .poNumber(history.getPoNumber())
+                .oldStatus(history.getOldStatus())
+                .newStatus(history.getNewStatus())
+                .changedBy(history.getChangedBy())
+                .changedByName(history.getChangedByName())
+                .changedAt(history.getChangedAt())
+                .comments(history.getComments())
+                .statusChangeDescription(description)
+                .build();
+    }
+
+    /**
+     * Build human-readable status change description
+     */
+    private String buildStatusChangeDescription(POStatus oldStatus, POStatus newStatus) {
+        if (oldStatus == null) {
+            return "Purchase Order created with status: " + formatStatus(newStatus);
+        }
+        return String.format("Status changed from %s to %s", formatStatus(oldStatus), formatStatus(newStatus));
+    }
+
+    /**
+     * Format status for display
+     */
+    private String formatStatus(POStatus status) {
+        if (status == null) return "Unknown";
+
+        // Convert enum to readable format: DRAFT -> Draft, PURCHASE_ORDER -> Purchase Order
+        String statusString = status.toString().replace("_", " ").toLowerCase();
+
+        // Capitalize first letter of each word
+        String[] words = statusString.split(" ");
+        StringBuilder result = new StringBuilder();
+
+        for (String word : words) {
+            if (word.length() > 0) {
+                result.append(Character.toUpperCase(word.charAt(0)))
+                        .append(word.substring(1))
+                        .append(" ");
+            }
+        }
+
+        return result.toString().trim();
     }
 
     // ==================== HELPER METHODS ====================
