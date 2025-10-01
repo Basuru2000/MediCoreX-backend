@@ -336,33 +336,51 @@ public class PurchaseOrderService {
      */
     private void sendApprovalRequestNotification(PurchaseOrder po) {
         try {
+            log.info("Attempting to send approval request notifications for PO: {}", po.getPoNumber());
+
             // Get all hospital managers
             List<User> managers = userRepository.findByRole(User.UserRole.HOSPITAL_MANAGER);
 
-            for (User manager : managers) {
-                Map<String, String> params = new HashMap<>();
-                params.put("poNumber", po.getPoNumber());
-                params.put("supplierName", po.getSupplier().getName());
-                params.put("amount", po.getTotalAmount().toString());
-                params.put("createdBy", po.getCreatedBy().getFullName());
-
-                Map<String, Object> actionData = new HashMap<>();
-                actionData.put("poId", po.getId());
-                actionData.put("type", "PO_APPROVAL_REQUEST");
-
-                // Create notification for each manager
-                notificationService.createNotificationFromTemplate(
-                        manager.getId(),
-                        "PO_APPROVAL_REQUEST",
-                        params,
-                        actionData
-                );
+            if (managers.isEmpty()) {
+                log.warn("No hospital managers found to notify for PO: {}", po.getPoNumber());
+                return;
             }
 
-            log.info("Approval request notifications sent for PO: {}", po.getPoNumber());
+            log.info("Found {} hospital managers to notify", managers.size());
+
+            for (User manager : managers) {
+                try {
+                    Map<String, String> params = new HashMap<>();
+                    params.put("poNumber", po.getPoNumber());
+                    params.put("supplierName", po.getSupplier().getName());
+                    params.put("amount", po.getTotalAmount().toString());
+                    params.put("createdBy", po.getCreatedBy().getFullName());
+
+                    Map<String, Object> actionData = new HashMap<>();
+                    actionData.put("poId", po.getId());
+                    actionData.put("type", "PO_APPROVAL_REQUEST");
+
+                    // Create notification for each manager
+                    notificationService.createNotificationFromTemplate(
+                            manager.getId(),
+                            "PO_APPROVAL_REQUEST",
+                            params,
+                            actionData
+                    );
+
+                    log.info("✅ Approval request sent to manager: {}", manager.getUsername());
+
+                } catch (Exception e) {
+                    log.error("❌ Failed to send notification to manager {}: {}",
+                            manager.getUsername(), e.getMessage());
+                }
+            }
+
+            log.info("Approval request notifications completed for PO: {}", po.getPoNumber());
+
         } catch (Exception e) {
-            log.error("Failed to send approval request notification for PO {}: {}",
-                    po.getPoNumber(), e.getMessage());
+            log.error("❌ Failed to send approval request notifications for PO {}: {}",
+                    po.getPoNumber(), e.getMessage(), e);
         }
     }
 
@@ -371,6 +389,9 @@ public class PurchaseOrderService {
      */
     private void sendApprovalNotification(PurchaseOrder po, boolean approved, String comments) {
         try {
+            log.info("Attempting to send {} notification for PO: {} to user ID: {}",
+                    approved ? "approval" : "rejection", po.getPoNumber(), po.getCreatedBy().getId());
+
             Map<String, String> params = new HashMap<>();
             params.put("poNumber", po.getPoNumber());
             params.put("approverName", po.getApprovedBy().getFullName());
@@ -386,6 +407,7 @@ public class PurchaseOrderService {
 
             String templateCode = approved ? "PO_APPROVED" : "PO_REJECTED";
 
+            // Use the createNotificationFromTemplate method
             notificationService.createNotificationFromTemplate(
                     po.getCreatedBy().getId(),
                     templateCode,
@@ -393,10 +415,17 @@ public class PurchaseOrderService {
                     actionData
             );
 
-            log.info("{} notification sent for PO: {}", approved ? "Approval" : "Rejection", po.getPoNumber());
+            log.info("✅ {} notification sent successfully for PO: {} to user: {}",
+                    approved ? "Approval" : "Rejection",
+                    po.getPoNumber(),
+                    po.getCreatedBy().getUsername());
+
         } catch (Exception e) {
-            log.error("Failed to send {} notification for PO {}: {}",
-                    approved ? "approval" : "rejection", po.getPoNumber(), e.getMessage());
+            log.error("❌ Failed to send {} notification for PO {}: {}",
+                    approved ? "approval" : "rejection",
+                    po.getPoNumber(),
+                    e.getMessage(), e);
+            // Don't throw exception - notification failure shouldn't break the approval process
         }
     }
 
