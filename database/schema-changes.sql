@@ -2166,7 +2166,63 @@ ON DUPLICATE KEY UPDATE
                      message_template = VALUES(message_template);
 
 
+-- =====================================================
+-- Date: 2025-01-03
+-- Feature: Purchase Order Status Tracking - Phase 2.3
+-- Developer: Phase 2.3 Implementation
+-- Status: ACTIVE
+-- =====================================================
 
+-- Purchase Order Status History table
+CREATE TABLE IF NOT EXISTS purchase_order_status_history (
+                                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                             po_id BIGINT NOT NULL,
+                                                             po_number VARCHAR(50) NOT NULL,
+                                                             old_status VARCHAR(20),
+                                                             new_status VARCHAR(20) NOT NULL,
+                                                             changed_by BIGINT NOT NULL,
+                                                             changed_by_name VARCHAR(100) NOT NULL,
+                                                             changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                             comments TEXT,
+
+    -- Indexes for performance
+                                                             INDEX idx_po_id (po_id),
+                                                             INDEX idx_po_number (po_number),
+                                                             INDEX idx_changed_at (changed_at DESC),
+                                                             INDEX idx_new_status (new_status),
+
+    -- Foreign key constraints
+                                                             FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
+                                                             FOREIGN KEY (changed_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Create view for recent status changes
+CREATE OR REPLACE VIEW recent_po_status_changes AS
+SELECT
+    posh.id,
+    posh.po_id,
+    posh.po_number,
+    posh.old_status,
+    posh.new_status,
+    posh.changed_by,
+    posh.changed_by_name,
+    posh.changed_at,
+    posh.comments,
+    po.supplier_id,
+    s.name as supplier_name
+FROM purchase_order_status_history posh
+         INNER JOIN purchase_orders po ON posh.po_id = po.id
+         INNER JOIN suppliers s ON po.supplier_id = s.id
+ORDER BY posh.changed_at DESC
+LIMIT 100;
+
+-- Add comment to table
+ALTER TABLE purchase_order_status_history
+    COMMENT = 'Tracks all status changes for purchase orders with full audit trail';
+
+-- =====================================================
+-- END OF STATUS TRACKING SCHEMA CHANGES
+-- =====================================================
 
 
 
