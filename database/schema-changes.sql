@@ -2017,6 +2017,88 @@ GROUP BY s.id, s.name;
 
 
 -- =====================================================
+-- Date: 2025-01-XX (Update with actual date)
+-- Feature: Purchase Order System - Phase 2.1 Basic PO Creation
+-- Developer: Phase 2.1 Implementation
+-- Status: ACTIVE
+-- =====================================================
+
+-- Purchase Orders table
+CREATE TABLE IF NOT EXISTS purchase_orders (
+                                               id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                               po_number VARCHAR(50) UNIQUE NOT NULL,
+                                               supplier_id BIGINT NOT NULL,
+                                               order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                               expected_delivery_date DATE,
+                                               status VARCHAR(20) DEFAULT 'DRAFT' NOT NULL,
+                                               subtotal DECIMAL(12,2) DEFAULT 0,
+                                               tax_amount DECIMAL(12,2) DEFAULT 0,
+                                               discount_amount DECIMAL(12,2) DEFAULT 0,
+                                               total_amount DECIMAL(12,2) NOT NULL,
+                                               notes TEXT,
+                                               created_by BIGINT NOT NULL,
+                                               approved_by BIGINT,
+                                               approved_date TIMESTAMP,
+                                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                               FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                                               FOREIGN KEY (created_by) REFERENCES users(id),
+                                               FOREIGN KEY (approved_by) REFERENCES users(id),
+
+                                               INDEX idx_po_number (po_number),
+                                               INDEX idx_po_supplier (supplier_id),
+                                               INDEX idx_po_status (status),
+                                               INDEX idx_po_order_date (order_date DESC),
+                                               INDEX idx_po_created_by (created_by)
+);
+
+-- Purchase Order Lines table
+CREATE TABLE IF NOT EXISTS purchase_order_lines (
+                                                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                    po_id BIGINT NOT NULL,
+                                                    product_id BIGINT NOT NULL,
+                                                    supplier_product_id BIGINT,
+                                                    product_name VARCHAR(200) NOT NULL,
+                                                    product_code VARCHAR(50),
+                                                    quantity INT NOT NULL,
+                                                    unit_price DECIMAL(10,2) NOT NULL,
+                                                    discount_percentage DECIMAL(5,2) DEFAULT 0,
+                                                    tax_percentage DECIMAL(5,2) DEFAULT 0,
+                                                    line_total DECIMAL(12,2) NOT NULL,
+                                                    received_quantity INT DEFAULT 0,
+                                                    notes TEXT,
+                                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                                                    FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
+                                                    FOREIGN KEY (product_id) REFERENCES products(id),
+                                                    FOREIGN KEY (supplier_product_id) REFERENCES supplier_products(id),
+
+                                                    INDEX idx_po_line_po (po_id),
+                                                    INDEX idx_po_line_product (product_id)
+);
+
+-- Create view for PO summary statistics
+CREATE OR REPLACE VIEW purchase_order_summary AS
+SELECT
+    po.id,
+    po.po_number,
+    po.status,
+    COUNT(pol.id) as line_items_count,
+    SUM(pol.quantity) as total_items,
+    SUM(pol.received_quantity) as total_received,
+    po.total_amount
+FROM purchase_orders po
+         LEFT JOIN purchase_order_lines pol ON po.id = pol.po_id
+GROUP BY po.id, po.po_number, po.status, po.total_amount;
+
+-- =====================================================
+-- END OF PURCHASE ORDER SCHEMA CHANGES
+-- =====================================================
+
+
+
+-- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
 
