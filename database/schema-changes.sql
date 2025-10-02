@@ -2356,6 +2356,55 @@ ON DUPLICATE KEY UPDATE
 -- END OF GOODS RECEIPT SCHEMA CHANGES
 -- =====================================================
 
+-- =====================================================
+-- Date: 2025-01-04
+-- Feature: Simple Accept/Reject Decision - Phase 3.2
+-- Status: READY TO APPLY
+-- Description: Add quality control decision workflow to goods receipts
+-- =====================================================
+
+-- Add acceptance status and quality control fields to goods_receipts
+ALTER TABLE goods_receipts
+    ADD COLUMN acceptance_status VARCHAR(20) NOT NULL DEFAULT 'PENDING_APPROVAL' AFTER status,
+    ADD COLUMN rejection_reason TEXT AFTER acceptance_status,
+    ADD COLUMN quality_checked_by BIGINT AFTER rejection_reason,
+    ADD COLUMN quality_checked_at TIMESTAMP NULL AFTER quality_checked_by,
+    ADD CONSTRAINT fk_quality_checked_by FOREIGN KEY (quality_checked_by) REFERENCES users(id);
+
+-- Add index for faster queries on acceptance status
+CREATE INDEX idx_acceptance_status ON goods_receipts(acceptance_status);
+
+-- Update existing receipts to ACCEPTED status (backward compatibility)
+UPDATE goods_receipts
+SET acceptance_status = 'ACCEPTED',
+    quality_checked_at = created_at,
+    quality_checked_by = received_by
+WHERE acceptance_status = 'PENDING_APPROVAL';
+
+-- Add notification templates for quality decisions
+INSERT INTO notification_templates (code, title_template, message_template, category, priority, active)
+VALUES
+    ('GOODS_RECEIPT_ACCEPTED',
+     'Goods Receipt Accepted: {{receiptNumber}}',
+     'Goods receipt {{receiptNumber}} for PO {{poNumber}} has been accepted. {{totalQuantity}} items added to inventory.',
+     'PROCUREMENT',
+     'MEDIUM',
+     true),
+
+    ('GOODS_RECEIPT_REJECTED',
+     'Goods Receipt Rejected: {{receiptNumber}}',
+     'Goods receipt {{receiptNumber}} for PO {{poNumber}} has been rejected. Reason: {{rejectionReason}}',
+     'PROCUREMENT',
+     'HIGH',
+     true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template);
+
+-- =====================================================
+-- END OF PHASE 3.2 SCHEMA CHANGES
+-- =====================================================
+
 
 
 

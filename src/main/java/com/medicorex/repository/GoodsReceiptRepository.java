@@ -43,4 +43,10 @@ public interface GoodsReceiptRepository extends JpaRepository<GoodsReceipt, Long
 
     @Query("SELECT COUNT(gr) FROM GoodsReceipt gr WHERE gr.purchaseOrder.id = :poId")
     Long countByPurchaseOrderId(@Param("poId") Long poId);
+
+    // ✨ PHASE 3.2: Query pending approvals
+    @Query("SELECT gr FROM GoodsReceipt gr " +
+            "WHERE gr.acceptanceStatus = 'PENDING_APPROVAL' " +
+            "ORDER BY gr.receiptDate DESC")
+    Page<GoodsReceipt> findPendingApprovals(Pageable pageable);
 }
