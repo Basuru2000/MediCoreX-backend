@@ -1,6 +1,7 @@
 package com.medicorex.dto;
 
 import com.medicorex.entity.GoodsReceipt.ReceiptStatus;
+import com.medicorex.entity.GoodsReceipt.AcceptanceStatus;  // ✨ ADD THIS
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,6 +25,15 @@ public class GoodsReceiptDTO {
     private Long supplierId;
     private String supplierName;
     private ReceiptStatus status;
+
+    // ✨ NEW FIELDS FOR PHASE 3.2
+    private AcceptanceStatus acceptanceStatus;
+    private String rejectionReason;
+    private Long qualityCheckedById;
+    private String qualityCheckedByName;
+    private LocalDateTime qualityCheckedAt;
+    // ✨ END NEW FIELDS
+
     private String notes;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

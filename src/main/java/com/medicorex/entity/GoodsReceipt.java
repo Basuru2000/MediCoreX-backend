@@ -48,6 +48,22 @@ public class GoodsReceipt {
     @Column(nullable = false, length = 20)
     private ReceiptStatus status = ReceiptStatus.RECEIVED;
 
+    // ✨ NEW FIELDS FOR PHASE 3.2
+    @Enumerated(EnumType.STRING)
+    @Column(name = "acceptance_status", nullable = false, length = 20)
+    private AcceptanceStatus acceptanceStatus = AcceptanceStatus.PENDING_APPROVAL;
+
+    @Column(name = "rejection_reason", columnDefinition = "TEXT")
+    private String rejectionReason;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "quality_checked_by")
+    private User qualityCheckedBy;
+
+    @Column(name = "quality_checked_at")
+    private LocalDateTime qualityCheckedAt;
+    // ✨ END NEW FIELDS
+
     @Column(columnDefinition = "TEXT")
     private String notes;
 
@@ -74,5 +90,12 @@ public class GoodsReceipt {
     public enum ReceiptStatus {
         RECEIVED,    // Successfully received
         CANCELLED    // Receipt cancelled (rare case)
+    }
+
+    // ✨ NEW ENUM FOR PHASE 3.2
+    public enum AcceptanceStatus {
+        PENDING_APPROVAL,  // Awaiting quality decision
+        ACCEPTED,          // Quality approved, inventory updated
+        REJECTED           // Quality rejected, not added to inventory
     }
 }

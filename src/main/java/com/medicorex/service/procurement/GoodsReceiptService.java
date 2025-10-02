@@ -114,21 +114,9 @@ public class GoodsReceiptService {
             );
         }
 
-        // Create batch for received items
-        ProductBatchCreateDTO batchDTO = ProductBatchCreateDTO.builder()
-                .productId(poLine.getProduct().getId())
-                .batchNumber(lineDTO.getBatchNumber())
-                .quantity(receiving)
-                .expiryDate(lineDTO.getExpiryDate())
-                .manufactureDate(lineDTO.getManufactureDate())
-                .supplierReference(po.getPoNumber())
-                .costPerUnit(poLine.getUnitPrice())
-                .notes("Received from PO: " + po.getPoNumber())
-                .build();
-
-        ProductBatchDTO createdBatch = batchService.createBatch(batchDTO);
-        log.info("Created batch {} for product {}", createdBatch.getBatchNumber(),
-                poLine.getProduct().getName());
+        // ✨ DON'T UPDATE INVENTORY YET - Wait for acceptance
+        // Just create the receipt line with reference to PO line
+        // Inventory will be updated when receipt is ACCEPTED
 
         // Update PO line received quantity
         poLine.setReceivedQuantity(alreadyReceived + receiving);
@@ -254,6 +242,173 @@ public class GoodsReceiptService {
     }
 
     /**
+     * Accept goods receipt - Add to inventory
+     */
+    public GoodsReceiptDTO acceptGoodsReceipt(Long receiptId, GoodsReceiptAcceptDTO acceptDTO) {
+        log.info("Accepting goods receipt ID: {}", receiptId);
+
+        GoodsReceipt receipt = receiptRepository.findByIdWithDetails(receiptId)
+                .orElseThrow(() -> new ResourceNotFoundException("Goods Receipt", "id", receiptId));
+
+        // Validate current status
+        if (receipt.getAcceptanceStatus() != GoodsReceipt.AcceptanceStatus.PENDING_APPROVAL) {
+            throw new BusinessException("Only pending receipts can be accepted. Current status: " +
+                    receipt.getAcceptanceStatus());
+        }
+
+        User currentUser = getCurrentUser();
+
+        // Update acceptance status
+        receipt.setAcceptanceStatus(GoodsReceipt.AcceptanceStatus.ACCEPTED);
+        receipt.setQualityCheckedBy(currentUser);
+        receipt.setQualityCheckedAt(LocalDateTime.now());
+
+        // Now process each line and update inventory
+        for (GoodsReceiptLine line : receipt.getLines()) {
+            try {
+                // Create or update product batch
+                ProductBatch batch = batchService.createOrUpdateBatch(
+                        ProductBatchCreateDTO.builder()
+                                .productId(line.getProduct().getId())
+                                .batchNumber(line.getBatchNumber())
+                                .quantity(line.getReceivedQuantity())
+                                .expiryDate(line.getExpiryDate())
+                                .manufactureDate(line.getManufactureDate())
+                                .costPerUnit(line.getUnitCost())
+                                .supplierReference(receipt.getPoNumber())
+                                .notes("Added from accepted receipt: " + receipt.getReceiptNumber() +
+                                        (acceptDTO.getQualityNotes() != null ? " | " + acceptDTO.getQualityNotes() : ""))
+                                .build()
+                );
+
+                // Link batch to receipt line
+                line.setBatch(batch);
+
+                log.info("✅ Inventory updated for product: {} | Batch: {} | Quantity: {}",
+                        line.getProductName(), batch.getBatchNumber(), line.getReceivedQuantity());
+
+            } catch (Exception e) {
+                log.error("❌ Failed to update inventory for line: {}", line.getId(), e);
+                throw new BusinessException("Failed to update inventory for " + line.getProductName() +
+                        ": " + e.getMessage());
+            }
+        }
+
+        GoodsReceipt savedReceipt = receiptRepository.save(receipt);
+        log.info("✅ Goods receipt {} accepted and inventory updated", receipt.getReceiptNumber());
+
+        // Check if PO is fully received
+        updatePurchaseOrderStatus(receipt.getPurchaseOrder());
+
+        // Send acceptance notification
+        sendAcceptanceNotification(savedReceipt);
+
+        return convertToDTO(savedReceipt);
+    }
+
+    /**
+     * Reject goods receipt - Do not add to inventory
+     */
+    public GoodsReceiptDTO rejectGoodsReceipt(Long receiptId, GoodsReceiptRejectDTO rejectDTO) {
+        log.info("Rejecting goods receipt ID: {}", receiptId);
+
+        GoodsReceipt receipt = receiptRepository.findByIdWithDetails(receiptId)
+                .orElseThrow(() -> new ResourceNotFoundException("Goods Receipt", "id", receiptId));
+
+        // Validate current status
+        if (receipt.getAcceptanceStatus() != GoodsReceipt.AcceptanceStatus.PENDING_APPROVAL) {
+            throw new BusinessException("Only pending receipts can be rejected. Current status: " +
+                    receipt.getAcceptanceStatus());
+        }
+
+        User currentUser = getCurrentUser();
+
+        // Update rejection status
+        receipt.setAcceptanceStatus(GoodsReceipt.AcceptanceStatus.REJECTED);
+        receipt.setRejectionReason(rejectDTO.getRejectionReason());
+        receipt.setQualityCheckedBy(currentUser);
+        receipt.setQualityCheckedAt(LocalDateTime.now());
+
+        GoodsReceipt savedReceipt = receiptRepository.save(receipt);
+        log.info("❌ Goods receipt {} rejected. Reason: {}",
+                receipt.getReceiptNumber(), rejectDTO.getRejectionReason());
+
+        // Update PO line received quantities (reduce back)
+        for (GoodsReceiptLine line : receipt.getLines()) {
+            PurchaseOrderLine poLine = line.getPoLine();
+            poLine.setReceivedQuantity(poLine.getReceivedQuantity() - line.getReceivedQuantity());
+            poLineRepository.save(poLine);
+        }
+
+        // Send rejection notification
+        sendRejectionNotification(savedReceipt, rejectDTO.getNotifySupplier());
+
+        return convertToDTO(savedReceipt);
+    }
+
+    /**
+     * Send acceptance notification
+     */
+    private void sendAcceptanceNotification(GoodsReceipt receipt) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("receiptNumber", receipt.getReceiptNumber());
+            params.put("poNumber", receipt.getPoNumber());
+            params.put("supplierName", receipt.getSupplierName());
+            params.put("totalQuantity", String.valueOf(
+                    receipt.getLines().stream()
+                            .mapToInt(GoodsReceiptLine::getReceivedQuantity)
+                            .sum()
+            ));
+
+            // Notify receipt creator
+            notificationService.createNotificationFromTemplate(
+                    receipt.getReceivedBy().getId(),
+                    "GOODS_RECEIPT_ACCEPTED",
+                    params,
+                    null
+            );
+
+            log.info("✅ Acceptance notification sent for receipt: {}", receipt.getReceiptNumber());
+
+        } catch (Exception e) {
+            log.error("❌ Failed to send acceptance notification: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Send rejection notification
+     */
+    private void sendRejectionNotification(GoodsReceipt receipt, Boolean notifySupplier) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("receiptNumber", receipt.getReceiptNumber());
+            params.put("poNumber", receipt.getPoNumber());
+            params.put("supplierName", receipt.getSupplierName());
+            params.put("rejectionReason", receipt.getRejectionReason());
+
+            // Notify receipt creator
+            notificationService.createNotificationFromTemplate(
+                    receipt.getReceivedBy().getId(),
+                    "GOODS_RECEIPT_REJECTED",
+                    params,
+                    null
+            );
+
+            // TODO: In future, notify supplier if requested
+            if (notifySupplier != null && notifySupplier) {
+                log.info("📧 Supplier notification requested for rejected receipt: {}",
+                        receipt.getReceiptNumber());
+            }
+
+            log.info("✅ Rejection notification sent for receipt: {}", receipt.getReceiptNumber());
+
+        } catch (Exception e) {
+            log.error("❌ Failed to send rejection notification: {}", e.getMessage());
+        }
+    }
+
+    /**
      * Get goods receipt by ID
      */
     @Transactional(readOnly = true)
@@ -292,6 +447,27 @@ public class GoodsReceiptService {
     public PageResponseDTO<GoodsReceiptDTO> getAllReceipts(Pageable pageable) {
         Page<GoodsReceipt> receiptPage = receiptRepository.findAll(pageable);
         return convertToPageResponse(receiptPage);
+    }
+
+    /**
+     * Get pending approval receipts
+     */
+    @Transactional(readOnly = true)
+    public PageResponseDTO<GoodsReceiptDTO> getPendingApprovals(Pageable pageable) {
+        Page<GoodsReceipt> receiptPage = receiptRepository.findPendingApprovals(pageable);
+
+        List<GoodsReceiptDTO> dtos = receiptPage.getContent().stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+
+        return PageResponseDTO.<GoodsReceiptDTO>builder()
+                .content(dtos)
+                .page(receiptPage.getNumber())
+                .size(receiptPage.getSize())
+                .totalElements(receiptPage.getTotalElements())
+                .totalPages(receiptPage.getTotalPages())
+                .last(receiptPage.isLast())
+                .build();
     }
 
     /**
@@ -362,6 +538,15 @@ public class GoodsReceiptService {
                 .supplierId(receipt.getSupplier().getId())
                 .supplierName(receipt.getSupplierName())
                 .status(receipt.getStatus())
+                // ✨ ADD NEW FIELDS
+                .acceptanceStatus(receipt.getAcceptanceStatus())
+                .rejectionReason(receipt.getRejectionReason())
+                .qualityCheckedById(receipt.getQualityCheckedBy() != null ?
+                        receipt.getQualityCheckedBy().getId() : null)
+                .qualityCheckedByName(receipt.getQualityCheckedBy() != null ?
+                        receipt.getQualityCheckedBy().getFullName() : null)
+                .qualityCheckedAt(receipt.getQualityCheckedAt())
+                // ✨ END NEW FIELDS
                 .notes(receipt.getNotes())
                 .createdAt(receipt.getCreatedAt())
                 .updatedAt(receipt.getUpdatedAt())

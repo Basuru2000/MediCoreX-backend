@@ -127,6 +127,118 @@ public class ProductBatchService {
     }
 
     /**
+     * Create a new batch or update existing batch quantity
+     * Used during goods receipt to handle multiple deliveries of same batch
+     */
+    public ProductBatch createOrUpdateBatch(ProductBatchCreateDTO dto) {
+        log.info("Processing batch: {} for product: {}", dto.getBatchNumber(), dto.getProductId());
+
+        // Validate product exists
+        Product product = productRepository.findById(dto.getProductId())
+                .orElseThrow(() -> new ResourceNotFoundException("Product", "id", dto.getProductId()));
+
+        // Check if batch already exists for this product
+        Optional<ProductBatch> existingBatch = batchRepository.findByProductIdAndBatchNumber(
+                dto.getProductId(),
+                dto.getBatchNumber()
+        );
+
+        if (existingBatch.isPresent()) {
+            // Update existing batch
+            ProductBatch batch = existingBatch.get();
+
+            log.info("Batch {} already exists. Current quantity: {}, Adding: {}",
+                    dto.getBatchNumber(), batch.getQuantity(), dto.getQuantity());
+
+            // Add to existing quantity
+            batch.setQuantity(batch.getQuantity() + dto.getQuantity());
+
+            // Update cost per unit if provided (use weighted average)
+            if (dto.getCostPerUnit() != null && dto.getCostPerUnit().compareTo(BigDecimal.ZERO) > 0) {
+                batch.setCostPerUnit(dto.getCostPerUnit());
+            }
+
+            // Update other fields if provided
+            if (dto.getSupplierReference() != null) {
+                batch.setSupplierReference(dto.getSupplierReference());
+            }
+
+            if (dto.getNotes() != null) {
+                String updatedNotes = batch.getNotes() != null
+                        ? batch.getNotes() + " | " + dto.getNotes()
+                        : dto.getNotes();
+                batch.setNotes(updatedNotes);
+            }
+
+            ProductBatch updatedBatch = batchRepository.save(batch);
+
+            // Update product total quantity
+            updateProductTotalQuantity(product.getId());
+
+            log.info("✅ Updated batch {} | New quantity: {}",
+                    batch.getBatchNumber(), updatedBatch.getQuantity());
+
+            return updatedBatch;
+
+        } else {
+            // Create new batch
+            log.info("Creating new batch: {}", dto.getBatchNumber());
+
+            ProductBatch batch = new ProductBatch();
+            batch.setProduct(product);
+            batch.setBatchNumber(dto.getBatchNumber());
+            batch.setQuantity(dto.getQuantity());
+            batch.setInitialQuantity(dto.getQuantity());
+            batch.setExpiryDate(dto.getExpiryDate());
+            batch.setManufactureDate(dto.getManufactureDate());
+            batch.setSupplierReference(dto.getSupplierReference());
+            batch.setCostPerUnit(dto.getCostPerUnit());
+            batch.setNotes(dto.getNotes());
+            batch.setStatus(ProductBatch.BatchStatus.ACTIVE);
+
+            ProductBatch savedBatch = batchRepository.save(batch);
+
+            // Update product total quantity
+            updateProductTotalQuantity(product.getId());
+
+            // Send batch created notification
+            try {
+                Map<String, String> params = new HashMap<>();
+                params.put("batchNumber", savedBatch.getBatchNumber());
+                params.put("productName", product.getName());
+                params.put("quantity", String.valueOf(savedBatch.getQuantity()));
+                params.put("expiryDate", savedBatch.getExpiryDate().toString());
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("batchId", savedBatch.getId());
+                actionData.put("productId", product.getId());
+
+                List<User.UserRole> roles = Arrays.asList(
+                        User.UserRole.HOSPITAL_MANAGER,
+                        User.UserRole.PHARMACY_STAFF
+                );
+                List<User> recipients = userRepository.findByRoleIn(roles);
+
+                for (User recipient : recipients) {
+                    notificationService.createNotificationFromTemplate(
+                            recipient.getId(),
+                            "BATCH_CREATED",
+                            params,
+                            actionData
+                    );
+                }
+            } catch (Exception e) {
+                log.error("Failed to send batch created notification: {}", e.getMessage());
+            }
+
+            log.info("✅ Created new batch {} | Quantity: {}",
+                    savedBatch.getBatchNumber(), savedBatch.getQuantity());
+
+            return savedBatch;
+        }
+    }
+
+    /**
      * Get all batches for a product
      */
     @Transactional(readOnly = true)
