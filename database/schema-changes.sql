@@ -2224,6 +2224,140 @@ ALTER TABLE purchase_order_status_history
 -- END OF STATUS TRACKING SCHEMA CHANGES
 -- =====================================================
 
+-- =====================================================
+-- Date: 2025-01-04
+-- Feature: Basic Goods Receipt - Phase 3.1
+-- Developer: Phase 3.1 Implementation
+-- Status: ACTIVE
+-- Description: Goods receipt processing with inventory integration
+-- =====================================================
+
+-- Goods Receipts table
+CREATE TABLE IF NOT EXISTS goods_receipts (
+                                              id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                              receipt_number VARCHAR(50) UNIQUE NOT NULL,
+                                              po_id BIGINT NOT NULL,
+                                              po_number VARCHAR(50) NOT NULL,
+
+    -- Receipt details
+                                              receipt_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                              received_by BIGINT NOT NULL,
+
+    -- Supplier information (denormalized for quick access)
+                                              supplier_id BIGINT NOT NULL,
+                                              supplier_name VARCHAR(200) NOT NULL,
+
+    -- Status and notes
+                                              status VARCHAR(20) NOT NULL DEFAULT 'RECEIVED',
+                                              notes TEXT,
+
+    -- Timestamps
+                                              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- Foreign keys
+                                              FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+                                              FOREIGN KEY (received_by) REFERENCES users(id),
+                                              FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+
+    -- Indexes for performance
+                                              INDEX idx_receipt_number (receipt_number),
+                                              INDEX idx_po_id (po_id),
+                                              INDEX idx_receipt_date (receipt_date DESC),
+                                              INDEX idx_received_by (received_by),
+                                              INDEX idx_supplier_id (supplier_id),
+                                              INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Goods Receipt Lines table
+CREATE TABLE IF NOT EXISTS goods_receipt_lines (
+                                                   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                   receipt_id BIGINT NOT NULL,
+                                                   po_line_id BIGINT NOT NULL,
+
+    -- Product information (denormalized)
+                                                   product_id BIGINT NOT NULL,
+                                                   product_name VARCHAR(200) NOT NULL,
+                                                   product_code VARCHAR(50),
+
+    -- Quantity details
+                                                   ordered_quantity INT NOT NULL,
+                                                   received_quantity INT NOT NULL,
+
+    -- Batch information
+                                                   batch_id BIGINT,
+                                                   batch_number VARCHAR(50) NOT NULL,
+                                                   expiry_date DATE NOT NULL,
+                                                   manufacture_date DATE,
+
+    -- Cost information
+                                                   unit_cost DECIMAL(12,2) NOT NULL,
+                                                   line_total DECIMAL(12,2) NOT NULL,
+
+    -- Quality notes
+                                                   quality_notes TEXT,
+
+    -- Timestamps
+                                                   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign keys
+                                                   FOREIGN KEY (receipt_id) REFERENCES goods_receipts(id) ON DELETE CASCADE,
+                                                   FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id),
+                                                   FOREIGN KEY (product_id) REFERENCES products(id),
+                                                   FOREIGN KEY (batch_id) REFERENCES product_batches(id),
+
+    -- Indexes
+                                                   INDEX idx_receipt_id (receipt_id),
+                                                   INDEX idx_po_line_id (po_line_id),
+                                                   INDEX idx_product_id (product_id),
+                                                   INDEX idx_batch_id (batch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Create view for receipt summary
+CREATE OR REPLACE VIEW goods_receipt_summary AS
+SELECT
+    gr.id,
+    gr.receipt_number,
+    gr.po_number,
+    gr.receipt_date,
+    gr.supplier_name,
+    u.full_name as received_by_name,
+    gr.status,
+    COUNT(grl.id) as line_count,
+    SUM(grl.received_quantity) as total_quantity,
+    SUM(grl.line_total) as total_value
+FROM goods_receipts gr
+         LEFT JOIN goods_receipt_lines grl ON gr.id = grl.receipt_id
+         LEFT JOIN users u ON gr.received_by = u.id
+GROUP BY gr.id, gr.receipt_number, gr.po_number, gr.receipt_date,
+         gr.supplier_name, u.full_name, gr.status;
+
+-- Notification templates for receiving
+INSERT INTO notification_templates (code, title_template, message_template, category, priority, active)
+VALUES
+    ('GOODS_RECEIVED',
+     'Goods Receipt Processed: {{receiptNumber}}',
+     'Goods receipt {{receiptNumber}} for PO {{poNumber}} has been processed. {{totalQuantity}} items received from {{supplierName}}.',
+     'PROCUREMENT',
+     'MEDIUM',
+     true),
+
+    ('PO_FULLY_RECEIVED',
+     'Purchase Order Fully Received: {{poNumber}}',
+     'All items for purchase order {{poNumber}} have been received and added to inventory.',
+     'PROCUREMENT',
+     'MEDIUM',
+     true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template);
+
+-- =====================================================
+-- END OF GOODS RECEIPT SCHEMA CHANGES
+-- =====================================================
+
+
+
 
 
 -- =====================================================
