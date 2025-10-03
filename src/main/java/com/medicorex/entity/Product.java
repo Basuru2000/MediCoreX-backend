@@ -48,6 +48,10 @@ public class Product {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
 
+    // NEW: Purchase price tracking (weighted average cost)
+    @Column(name = "purchase_price", precision = 10, scale = 2)
+    private BigDecimal purchasePrice;
+
     private LocalDate expiryDate;
 
     private String batchNumber;
@@ -61,7 +65,7 @@ public class Product {
 
     private LocalDateTime updatedAt;
 
-    // New fields added
+    // Stock level thresholds
     @Column(name = "min_stock")
     private Integer minStock = 10; // Default minimum stock level
 
