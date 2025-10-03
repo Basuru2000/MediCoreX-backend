@@ -116,4 +116,13 @@ public class GoodsReceiptController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "receiptDate"));
         return ResponseEntity.ok(goodsReceiptService.getPendingApprovals(pageable));
     }
+
+    /**
+     * Preview inventory impact before accepting goods receipt
+     */
+    @GetMapping("/{id}/inventory-preview")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<StockLevelComparisonDTO>> previewInventoryImpact(@PathVariable Long id) {
+        return ResponseEntity.ok(goodsReceiptService.previewInventoryImpact(id));
+    }
 }

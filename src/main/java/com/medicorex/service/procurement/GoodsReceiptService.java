@@ -8,6 +8,7 @@ import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.*;
 import com.medicorex.service.NotificationService;
 import com.medicorex.service.ProductBatchService;
+import com.medicorex.service.supplier.SupplierMetricsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -18,11 +19,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -36,9 +40,12 @@ public class GoodsReceiptService {
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderLineRepository poLineRepository;
     private final ProductRepository productRepository;
+    private final ProductBatchRepository batchRepository;
     private final ProductBatchService batchService;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final StockTransactionRepository stockTransactionRepository;
+    private final SupplierMetricsService supplierMetricsService;
 
     /**
      * Create goods receipt from purchase order
@@ -114,10 +121,6 @@ public class GoodsReceiptService {
             );
         }
 
-        // ✨ DON'T UPDATE INVENTORY YET - Wait for acceptance
-        // Just create the receipt line with reference to PO line
-        // Inventory will be updated when receipt is ACCEPTED
-
         // Update PO line received quantity
         poLine.setReceivedQuantity(alreadyReceived + receiving);
         poLineRepository.save(poLine);
@@ -169,19 +172,16 @@ public class GoodsReceiptService {
                     .mapToInt(GoodsReceiptLine::getReceivedQuantity)
                     .sum();
 
-            // ✅ FIXED: Use Map<String, String> for params
             Map<String, String> params = new HashMap<>();
             params.put("receiptNumber", receipt.getReceiptNumber());
             params.put("poNumber", po.getPoNumber());
             params.put("supplierName", receipt.getSupplierName());
             params.put("totalQuantity", String.valueOf(totalQuantity));
 
-            // Action data (can remain as Map<String, Object>)
             Map<String, Object> actionData = new HashMap<>();
             actionData.put("receiptId", receipt.getId());
             actionData.put("poId", po.getId());
 
-            // ✅ FIXED: Use correct method name and signature
             notificationService.createNotificationFromTemplate(
                     po.getCreatedBy().getId(),
                     "GOODS_RECEIVED",
@@ -211,15 +211,12 @@ public class GoodsReceiptService {
      */
     private void sendFullyReceivedNotification(PurchaseOrder po) {
         try {
-            // ✅ FIXED: Use Map<String, String> for params
             Map<String, String> params = new HashMap<>();
             params.put("poNumber", po.getPoNumber());
 
-            // Action data
             Map<String, Object> actionData = new HashMap<>();
             actionData.put("poId", po.getId());
 
-            // ✅ FIXED: Use correct method name and signature
             notificationService.createNotificationFromTemplate(
                     po.getCreatedBy().getId(),
                     "PO_FULLY_RECEIVED",
@@ -242,7 +239,60 @@ public class GoodsReceiptService {
     }
 
     /**
-     * Accept goods receipt - Add to inventory
+     * Preview inventory impact before acceptance
+     */
+    @Transactional(readOnly = true)
+    public List<StockLevelComparisonDTO> previewInventoryImpact(Long receiptId) {
+        log.info("Previewing inventory impact for receipt ID: {}", receiptId);
+
+        GoodsReceipt receipt = receiptRepository.findByIdWithDetails(receiptId)
+                .orElseThrow(() -> new ResourceNotFoundException("Goods Receipt", "id", receiptId));
+
+        List<StockLevelComparisonDTO> comparisons = new ArrayList<>();
+
+        for (GoodsReceiptLine line : receipt.getLines()) {
+            Product product = line.getProduct();
+
+            // Check if batch exists
+            Optional<ProductBatch> existingBatch = batchRepository
+                    .findByProductIdAndBatchNumber(product.getId(), line.getBatchNumber());
+
+            // Calculate stock status using minStockLevel
+            Integer projectedStock = product.getQuantity() + line.getReceivedQuantity();
+            String stockStatus = "ADEQUATE";
+            if (product.getMinStockLevel() != null) {
+                if (projectedStock <= product.getMinStockLevel()) {
+                    stockStatus = "LOW";
+                } else if (projectedStock > product.getMinStockLevel() * 3) {
+                    stockStatus = "OVERSTOCKED";
+                }
+            }
+
+            StockLevelComparisonDTO comparison = StockLevelComparisonDTO.builder()
+                    .productId(product.getId())
+                    .productName(product.getName())
+                    .productCode(product.getCode())
+                    .currentStock(product.getQuantity())
+                    .incomingQuantity(line.getReceivedQuantity())
+                    .projectedStock(projectedStock)
+                    .batchNumber(line.getBatchNumber())
+                    .willCreateNewBatch(!existingBatch.isPresent())
+                    .existingBatchId(existingBatch.map(b -> b.getId().toString()).orElse(null))
+                    .unitCost(line.getUnitCost())
+                    .totalValue(line.getLineTotal())
+                    .reorderLevel(product.getMinStockLevel())
+                    .minStockLevel(product.getMinStockLevel())
+                    .stockStatus(stockStatus)
+                    .build();
+
+            comparisons.add(comparison);
+        }
+
+        return comparisons;
+    }
+
+    /**
+     * Accept goods receipt - Add to inventory with full integration
      */
     public GoodsReceiptDTO acceptGoodsReceipt(Long receiptId, GoodsReceiptAcceptDTO acceptDTO) {
         log.info("Accepting goods receipt ID: {}", receiptId);
@@ -263,10 +313,15 @@ public class GoodsReceiptService {
         receipt.setQualityCheckedBy(currentUser);
         receipt.setQualityCheckedAt(LocalDateTime.now());
 
+        // Track metrics for supplier performance update
+        int totalItemsReceived = 0;
+        int totalItemsAccepted = 0;
+        BigDecimal totalCost = BigDecimal.ZERO;
+
         // Now process each line and update inventory
         for (GoodsReceiptLine line : receipt.getLines()) {
             try {
-                // Create or update product batch
+                // STEP 1: Create or update product batch
                 ProductBatch batch = batchService.createOrUpdateBatch(
                         ProductBatchCreateDTO.builder()
                                 .productId(line.getProduct().getId())
@@ -277,25 +332,52 @@ public class GoodsReceiptService {
                                 .costPerUnit(line.getUnitCost())
                                 .supplierReference(receipt.getPoNumber())
                                 .notes("Added from accepted receipt: " + receipt.getReceiptNumber() +
-                                        (acceptDTO.getQualityNotes() != null ? " | " + acceptDTO.getQualityNotes() : ""))
+                                        (acceptDTO.getQualityNotes() != null ?
+                                                " | Quality: " + acceptDTO.getQualityNotes() : ""))
                                 .build()
                 );
 
                 // Link batch to receipt line
                 line.setBatch(batch);
 
-                log.info("✅ Inventory updated for product: {} | Batch: {} | Quantity: {}",
+                // STEP 2: Create stock transaction for audit trail
+                createStockTransaction(
+                        line.getProduct(),
+                        line.getReceivedQuantity(),
+                        "GOODS_RECEIPT",
+                        "Goods received from PO: " + receipt.getPoNumber() +
+                                " | Receipt: " + receipt.getReceiptNumber() +
+                                " | Batch: " + line.getBatchNumber(),
+                        currentUser
+                );
+
+                // STEP 3: Update product average purchase price
+                updateProductAverageCost(
+                        line.getProduct(),
+                        line.getReceivedQuantity(),
+                        line.getUnitCost()
+                );
+
+                // Track for supplier metrics
+                totalItemsReceived += line.getReceivedQuantity();
+                totalItemsAccepted += line.getReceivedQuantity();
+                totalCost = totalCost.add(line.getLineTotal());
+
+                log.info("Inventory updated for product: {} | Batch: {} | Quantity: {}",
                         line.getProductName(), batch.getBatchNumber(), line.getReceivedQuantity());
 
             } catch (Exception e) {
-                log.error("❌ Failed to update inventory for line: {}", line.getId(), e);
+                log.error("Failed to update inventory for line: {}", line.getId(), e);
                 throw new BusinessException("Failed to update inventory for " + line.getProductName() +
                         ": " + e.getMessage());
             }
         }
 
         GoodsReceipt savedReceipt = receiptRepository.save(receipt);
-        log.info("✅ Goods receipt {} accepted and inventory updated", receipt.getReceiptNumber());
+        log.info("Goods receipt {} accepted and inventory updated", receipt.getReceiptNumber());
+
+        // STEP 4: Update supplier metrics
+        updateSupplierMetrics(receipt, totalItemsReceived, totalItemsAccepted, true);
 
         // Check if PO is fully received
         updatePurchaseOrderStatus(receipt.getPurchaseOrder());
@@ -330,7 +412,7 @@ public class GoodsReceiptService {
         receipt.setQualityCheckedAt(LocalDateTime.now());
 
         GoodsReceipt savedReceipt = receiptRepository.save(receipt);
-        log.info("❌ Goods receipt {} rejected. Reason: {}",
+        log.info("Goods receipt {} rejected. Reason: {}",
                 receipt.getReceiptNumber(), rejectDTO.getRejectionReason());
 
         // Update PO line received quantities (reduce back)
@@ -340,10 +422,101 @@ public class GoodsReceiptService {
             poLineRepository.save(poLine);
         }
 
+        // Update supplier metrics for rejection
+        int totalItemsReceived = receipt.getLines().stream()
+                .mapToInt(GoodsReceiptLine::getReceivedQuantity)
+                .sum();
+        updateSupplierMetrics(receipt, totalItemsReceived, 0, false);
+
         // Send rejection notification
         sendRejectionNotification(savedReceipt, rejectDTO.getNotifySupplier());
 
         return convertToDTO(savedReceipt);
+    }
+
+    /**
+     * Create stock transaction for audit trail
+     */
+    private void createStockTransaction(Product product, Integer quantity,
+                                        String type, String reason, User user) {
+        try {
+            StockTransaction transaction = new StockTransaction();
+            transaction.setProduct(product);
+            transaction.setType(type);
+            transaction.setTransactionType(TransactionType.PURCHASE);
+            transaction.setQuantity(quantity);
+            transaction.setBalanceAfter(product.getQuantity());
+            transaction.setReason(reason);
+            transaction.setPerformedBy(user.getId()); // Pass user ID, not User object
+            transaction.setTransactionDate(LocalDateTime.now());
+
+            stockTransactionRepository.save(transaction);
+            log.info("Stock transaction logged: {} units for product {}", quantity, product.getName());
+
+        } catch (Exception e) {
+            log.error("Failed to create stock transaction: {}", e.getMessage());
+            // Don't fail the entire operation if transaction logging fails
+        }
+    }
+
+    /**
+     * Update product average purchase price
+     */
+    private void updateProductAverageCost(Product product, Integer newQuantity, BigDecimal newCost) {
+        try {
+            if (newCost == null || newCost.compareTo(BigDecimal.ZERO) <= 0) {
+                return; // Skip if cost is not provided or invalid
+            }
+
+            // Calculate weighted average
+            Integer currentQty = product.getQuantity() - newQuantity; // Stock before this receipt
+            BigDecimal currentCost = product.getPurchasePrice() != null ?
+                    product.getPurchasePrice() : BigDecimal.ZERO;
+
+            if (currentQty > 0 && currentCost.compareTo(BigDecimal.ZERO) > 0) {
+                // Weighted average formula
+                BigDecimal totalOldValue = currentCost.multiply(BigDecimal.valueOf(currentQty));
+                BigDecimal totalNewValue = newCost.multiply(BigDecimal.valueOf(newQuantity));
+                BigDecimal totalValue = totalOldValue.add(totalNewValue);
+                BigDecimal totalQuantity = BigDecimal.valueOf(currentQty + newQuantity);
+
+                // Use RoundingMode.HALF_UP instead of deprecated constant
+                BigDecimal averageCost = totalValue.divide(totalQuantity, 2, RoundingMode.HALF_UP);
+                product.setPurchasePrice(averageCost);
+            } else {
+                // First purchase or no existing cost
+                product.setPurchasePrice(newCost);
+            }
+
+            productRepository.save(product);
+            log.info("Updated average cost for product {}: {}", product.getName(), product.getPurchasePrice());
+
+        } catch (Exception e) {
+            log.error("Failed to update product average cost: {}", e.getMessage());
+            // Don't fail the entire operation
+        }
+    }
+
+    /**
+     * Update supplier performance metrics
+     */
+    private void updateSupplierMetrics(GoodsReceipt receipt, int itemsReceived,
+                                       int itemsAccepted, boolean onTime) {
+        try {
+            Long supplierId = receipt.getSupplier().getId();
+
+            // Update quality metrics
+            supplierMetricsService.updateQualityMetrics(supplierId, itemsReceived, itemsAccepted);
+
+            // Update delivery metrics
+            supplierMetricsService.updateDeliveryMetrics(supplierId, onTime);
+
+            log.info("Updated supplier metrics for supplier ID: {}", supplierId);
+
+        } catch (Exception e) {
+            log.error("Failed to update supplier metrics: {}", e.getMessage());
+            // Don't fail the entire operation
+        }
     }
 
     /**
@@ -361,7 +534,6 @@ public class GoodsReceiptService {
                             .sum()
             ));
 
-            // Notify receipt creator
             notificationService.createNotificationFromTemplate(
                     receipt.getReceivedBy().getId(),
                     "GOODS_RECEIPT_ACCEPTED",
@@ -369,10 +541,10 @@ public class GoodsReceiptService {
                     null
             );
 
-            log.info("✅ Acceptance notification sent for receipt: {}", receipt.getReceiptNumber());
+            log.info("Acceptance notification sent for receipt: {}", receipt.getReceiptNumber());
 
         } catch (Exception e) {
-            log.error("❌ Failed to send acceptance notification: {}", e.getMessage());
+            log.error("Failed to send acceptance notification: {}", e.getMessage());
         }
     }
 
@@ -387,7 +559,6 @@ public class GoodsReceiptService {
             params.put("supplierName", receipt.getSupplierName());
             params.put("rejectionReason", receipt.getRejectionReason());
 
-            // Notify receipt creator
             notificationService.createNotificationFromTemplate(
                     receipt.getReceivedBy().getId(),
                     "GOODS_RECEIPT_REJECTED",
@@ -397,14 +568,14 @@ public class GoodsReceiptService {
 
             // TODO: In future, notify supplier if requested
             if (notifySupplier != null && notifySupplier) {
-                log.info("📧 Supplier notification requested for rejected receipt: {}",
+                log.info("Supplier notification requested for rejected receipt: {}",
                         receipt.getReceiptNumber());
             }
 
-            log.info("✅ Rejection notification sent for receipt: {}", receipt.getReceiptNumber());
+            log.info("Rejection notification sent for receipt: {}", receipt.getReceiptNumber());
 
         } catch (Exception e) {
-            log.error("❌ Failed to send rejection notification: {}", e.getMessage());
+            log.error("Failed to send rejection notification: {}", e.getMessage());
         }
     }
 
@@ -538,7 +709,6 @@ public class GoodsReceiptService {
                 .supplierId(receipt.getSupplier().getId())
                 .supplierName(receipt.getSupplierName())
                 .status(receipt.getStatus())
-                // ✨ ADD NEW FIELDS
                 .acceptanceStatus(receipt.getAcceptanceStatus())
                 .rejectionReason(receipt.getRejectionReason())
                 .qualityCheckedById(receipt.getQualityCheckedBy() != null ?
@@ -546,7 +716,6 @@ public class GoodsReceiptService {
                 .qualityCheckedByName(receipt.getQualityCheckedBy() != null ?
                         receipt.getQualityCheckedBy().getFullName() : null)
                 .qualityCheckedAt(receipt.getQualityCheckedAt())
-                // ✨ END NEW FIELDS
                 .notes(receipt.getNotes())
                 .createdAt(receipt.getCreatedAt())
                 .updatedAt(receipt.getUpdatedAt())
