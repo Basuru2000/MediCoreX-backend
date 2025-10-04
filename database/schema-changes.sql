@@ -2472,6 +2472,117 @@ ON DUPLICATE KEY UPDATE
 -- =====================================================
 
 
+-- =====================================================
+-- Date: 2025-01-06
+-- Feature: Quality Inspection Checklist - Phase 4.2
+-- Status: READY TO APPLY
+-- Description: Structured quality control process with audit trail
+-- =====================================================
+
+-- 1. Quality Checklist Templates table
+CREATE TABLE IF NOT EXISTS quality_checklist_templates (
+                                                           id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                           name VARCHAR(100) NOT NULL,
+                                                           description TEXT,
+                                                           category VARCHAR(50) NOT NULL DEFAULT 'GENERAL',
+                                                           is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                                                           is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                                                           created_by BIGINT,
+                                                           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                                           FOREIGN KEY (created_by) REFERENCES users(id),
+                                                           INDEX idx_category (category),
+                                                           INDEX idx_is_active (is_active),
+                                                           INDEX idx_is_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 2. Quality Check Items table
+CREATE TABLE IF NOT EXISTS quality_check_items (
+                                                   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                   template_id BIGINT NOT NULL,
+                                                   item_order INT NOT NULL,
+                                                   check_description VARCHAR(500) NOT NULL,
+                                                   check_type VARCHAR(20) NOT NULL DEFAULT 'YES_NO',
+                                                   is_mandatory BOOLEAN NOT NULL DEFAULT FALSE,
+                                                   expected_value VARCHAR(100),
+                                                   notes TEXT,
+                                                   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                                                   FOREIGN KEY (template_id) REFERENCES quality_checklist_templates(id) ON DELETE CASCADE,
+                                                   INDEX idx_template_id (template_id),
+                                                   INDEX idx_item_order (item_order),
+                                                   INDEX idx_is_mandatory (is_mandatory)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 3. Goods Receipt Checklists table
+CREATE TABLE IF NOT EXISTS goods_receipt_checklists (
+                                                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                        receipt_id BIGINT NOT NULL,
+                                                        template_id BIGINT NOT NULL,
+                                                        template_name VARCHAR(100) NOT NULL,
+                                                        completed_by BIGINT NOT NULL,
+                                                        completed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                        overall_result VARCHAR(20) NOT NULL,
+                                                        inspector_notes TEXT,
+
+                                                        FOREIGN KEY (receipt_id) REFERENCES goods_receipts(id) ON DELETE CASCADE,
+                                                        FOREIGN KEY (template_id) REFERENCES quality_checklist_templates(id),
+                                                        FOREIGN KEY (completed_by) REFERENCES users(id),
+                                                        INDEX idx_receipt_id (receipt_id),
+                                                        INDEX idx_completed_by (completed_by),
+                                                        INDEX idx_overall_result (overall_result)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 4. Checklist Answers table
+CREATE TABLE IF NOT EXISTS checklist_answers (
+                                                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                 checklist_id BIGINT NOT NULL,
+                                                 check_item_id BIGINT NOT NULL,
+                                                 check_description VARCHAR(500) NOT NULL,
+                                                 answer VARCHAR(100) NOT NULL,
+                                                 is_compliant BOOLEAN NOT NULL DEFAULT TRUE,
+                                                 remarks TEXT,
+                                                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                                                 FOREIGN KEY (checklist_id) REFERENCES goods_receipt_checklists(id) ON DELETE CASCADE,
+                                                 FOREIGN KEY (check_item_id) REFERENCES quality_check_items(id),
+                                                 INDEX idx_checklist_id (checklist_id),
+                                                 INDEX idx_is_compliant (is_compliant)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 5. Insert default quality checklist template
+INSERT INTO quality_checklist_templates (name, description, category, is_active, is_default)
+VALUES
+    ('Standard Medical Supplies QC',
+     'Standard quality checklist for medical supplies and equipment',
+     'GENERAL',
+     TRUE,
+     TRUE);
+
+-- 6. Insert default quality check items
+INSERT INTO quality_check_items (template_id, item_order, check_description, check_type, is_mandatory, expected_value)
+VALUES
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     1, 'Package integrity - no damage or tampering', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     2, 'Product labels are clear and legible', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     3, 'Batch number matches purchase order', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     4, 'Expiry date is acceptable (>6 months)', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     5, 'Temperature-sensitive items maintained correctly', 'YES_NO', FALSE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     6, 'Quantity matches purchase order', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     7, 'Product appearance is normal (color, consistency)', 'YES_NO', TRUE, 'YES'),
+    ((SELECT id FROM quality_checklist_templates WHERE is_default = TRUE LIMIT 1),
+     8, 'Sterile items - packaging intact', 'YES_NO', FALSE, 'YES');
+
+-- =====================================================
+-- END OF QUALITY INSPECTION CHECKLIST SCHEMA CHANGES
+-- =====================================================
 
 
 
