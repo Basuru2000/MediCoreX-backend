@@ -50,191 +50,194 @@ public class GoodsReceiptService {
     /**
      * Create goods receipt from purchase order
      */
+    @Transactional
     public GoodsReceiptDTO createGoodsReceipt(GoodsReceiptCreateDTO createDTO) {
-        log.info("Creating goods receipt for PO ID: {}", createDTO.getPoId());
+        log.info("Creating goods receipt for PO: {}", createDTO.getPoId());
 
-        // Validate PO exists and is in SENT or APPROVED status
-        PurchaseOrder po = purchaseOrderRepository.findByIdWithDetails(createDTO.getPoId())
+        // Validate and fetch PO
+        PurchaseOrder purchaseOrder = purchaseOrderRepository.findById(createDTO.getPoId())
                 .orElseThrow(() -> new ResourceNotFoundException("Purchase Order", "id", createDTO.getPoId()));
 
-        if (po.getStatus() != POStatus.SENT && po.getStatus() != POStatus.APPROVED) {
-            throw new BusinessException("Can only receive goods for SENT or APPROVED purchase orders");
+        // Validate PO status - allow SENT or PARTIALLY_RECEIVED
+        if (purchaseOrder.getStatus() != PurchaseOrder.POStatus.SENT &&
+                purchaseOrder.getStatus() != PurchaseOrder.POStatus.PARTIALLY_RECEIVED) {
+            throw new BusinessException("Cannot create receipt. Purchase order status must be SENT or PARTIALLY_RECEIVED. Current status: " + purchaseOrder.getStatus());
         }
 
-        // Create receipt
+        // Get current user
+        User currentUser = getCurrentUser();
+
+        // Create goods receipt
         GoodsReceipt receipt = new GoodsReceipt();
         receipt.setReceiptNumber(generateReceiptNumber());
-        receipt.setPurchaseOrder(po);
-        receipt.setPoNumber(po.getPoNumber());
+        receipt.setPurchaseOrder(purchaseOrder);
+        receipt.setPoNumber(purchaseOrder.getPoNumber());
         receipt.setReceiptDate(LocalDateTime.now());
-        receipt.setReceivedBy(getCurrentUser());
-        receipt.setSupplier(po.getSupplier());
-        receipt.setSupplierName(po.getSupplier().getName());
+        receipt.setReceivedBy(currentUser);
+        receipt.setSupplier(purchaseOrder.getSupplier());
+        receipt.setSupplierName(purchaseOrder.getSupplier().getName());
         receipt.setStatus(GoodsReceipt.ReceiptStatus.RECEIVED);
+        receipt.setAcceptanceStatus(GoodsReceipt.AcceptanceStatus.PENDING_APPROVAL);
         receipt.setNotes(createDTO.getNotes());
 
-        // Process each line item
+        // Process receipt lines with partial receipt support
+        int totalOrderedQuantity = 0;
+        int totalReceivedQuantity = 0;
+
         for (GoodsReceiptLineCreateDTO lineDTO : createDTO.getLines()) {
-            GoodsReceiptLine line = processReceiptLine(lineDTO, receipt, po);
-            receipt.addLine(line);
+            PurchaseOrderLine poLine = purchaseOrder.getLines().stream()
+                    .filter(l -> l.getId().equals(lineDTO.getPoLineId()))
+                    .findFirst()
+                    .orElseThrow(() -> new ResourceNotFoundException("Purchase Order Line", "id", lineDTO.getPoLineId()));
+
+            // ENHANCED VALIDATION FOR PARTIAL RECEIPTS
+            int currentReceived = poLine.getReceivedQuantity() != null ? poLine.getReceivedQuantity() : 0;
+            int newReceivingQty = lineDTO.getReceivedQuantity();
+            int totalAfterReceipt = currentReceived + newReceivingQty;
+
+            // Validate: cannot receive more than ordered
+            if (totalAfterReceipt > poLine.getQuantity()) {
+                throw new BusinessException(String.format(
+                        "Cannot receive %d units of %s. Ordered: %d, Already received: %d, Remaining: %d",
+                        newReceivingQty, poLine.getProductName(), poLine.getQuantity(),
+                        currentReceived, poLine.getRemainingQuantity()
+                ));
+            }
+
+            // Validate: must receive at least 1 item
+            if (newReceivingQty <= 0) {
+                throw new BusinessException("Received quantity must be greater than 0 for " + poLine.getProductName());
+            }
+
+            totalOrderedQuantity += poLine.getQuantity();
+            totalReceivedQuantity += newReceivingQty;
+
+            // Create batch with proper error handling
+            ProductBatch batch;
+            try {
+                batch = batchService.createOrUpdateBatch(
+                        ProductBatchCreateDTO.builder()
+                                .productId(poLine.getProduct().getId())
+                                .batchNumber(lineDTO.getBatchNumber())
+                                .quantity(newReceivingQty)
+                                .expiryDate(lineDTO.getExpiryDate())
+                                .manufactureDate(lineDTO.getManufactureDate())
+                                .costPerUnit(poLine.getUnitPrice())
+                                .supplierReference(purchaseOrder.getPoNumber())
+                                .notes("Received via receipt: " + receipt.getReceiptNumber())
+                                .build()
+                );
+            } catch (Exception e) {
+                log.error("Failed to create/update batch for product {}: {}",
+                        poLine.getProductName(), e.getMessage(), e);
+                throw new BusinessException(
+                        String.format("Failed to create batch '%s' for product '%s': %s. Please use a unique batch number for each product.",
+                                lineDTO.getBatchNumber(),
+                                poLine.getProductName(),
+                                e.getMessage())
+                );
+            }
+
+            // Create receipt line
+            GoodsReceiptLine receiptLine = new GoodsReceiptLine();
+            receiptLine.setPoLine(poLine);
+            receiptLine.setProduct(poLine.getProduct());
+            receiptLine.setProductName(poLine.getProductName());
+            receiptLine.setProductCode(poLine.getProductCode());
+            receiptLine.setOrderedQuantity(poLine.getQuantity());
+            receiptLine.setReceivedQuantity(newReceivingQty);
+            receiptLine.setBatch(batch);
+            receiptLine.setBatchNumber(batch.getBatchNumber());
+            receiptLine.setExpiryDate(batch.getExpiryDate());
+            receiptLine.setManufactureDate(batch.getManufactureDate());
+            receiptLine.setUnitCost(poLine.getUnitPrice());
+            receiptLine.setLineTotal(poLine.getUnitPrice().multiply(BigDecimal.valueOf(newReceivingQty)));
+            receiptLine.setQualityNotes(lineDTO.getQualityNotes());
+
+            receipt.addLine(receiptLine);
+
+            // UPDATE PO LINE WITH NEW QUANTITIES
+            poLine.receiveQuantity(newReceivingQty);
+
+            log.info("Line {}: Ordered={}, PreviouslyReceived={}, NowReceiving={}, NewTotal={}, Remaining={}",
+                    poLine.getProductName(), poLine.getQuantity(), currentReceived,
+                    newReceivingQty, poLine.getReceivedQuantity(), poLine.getRemainingQuantity());
         }
 
         // Save receipt
         GoodsReceipt savedReceipt = receiptRepository.save(receipt);
-        log.info("Created goods receipt: {}", savedReceipt.getReceiptNumber());
 
-        // Check if PO is fully received and update status
-        updatePurchaseOrderStatus(po);
+        // UPDATE PO STATUS BASED ON FULFILLMENT
+        updatePurchaseOrderStatus(purchaseOrder);
 
-        // Send notifications
-        sendReceiptNotifications(savedReceipt, po);
+        // Save updated PO
+        purchaseOrderRepository.save(purchaseOrder);
+
+        log.info("Goods receipt created successfully: {}. PO Status updated to: {}",
+                savedReceipt.getReceiptNumber(), purchaseOrder.getStatus());
+
+        // Create notification for partial receipt
+        if (purchaseOrder.getStatus() == PurchaseOrder.POStatus.PARTIALLY_RECEIVED) {
+            try {
+                Map<String, String> params = new HashMap<>();
+                params.put("receiptNumber", savedReceipt.getReceiptNumber());
+                params.put("poNumber", purchaseOrder.getPoNumber());
+                params.put("receivedQuantity", String.valueOf(totalReceivedQuantity));
+                params.put("totalQuantity", String.valueOf(totalOrderedQuantity));
+                params.put("percentage", String.valueOf(totalOrderedQuantity > 0 ? (totalReceivedQuantity * 100 / totalOrderedQuantity) : 0));
+
+                Map<String, Object> actionData = new HashMap<>();
+                actionData.put("receiptId", savedReceipt.getId());
+                actionData.put("poId", purchaseOrder.getId());
+
+                notificationService.createNotificationFromTemplate(
+                        purchaseOrder.getCreatedBy().getId(),
+                        "PO_PARTIALLY_RECEIVED",
+                        params,
+                        actionData
+                );
+            } catch (Exception e) {
+                log.error("Failed to send partial receipt notification: {}", e.getMessage());
+            }
+        }
 
         return convertToDTO(savedReceipt);
     }
 
     /**
-     * Process individual receipt line
+     * UPDATE PO STATUS BASED ON FULFILLMENT PERCENTAGE
      */
-    private GoodsReceiptLine processReceiptLine(
-            GoodsReceiptLineCreateDTO lineDTO,
-            GoodsReceipt receipt,
-            PurchaseOrder po) {
+    private void updatePurchaseOrderStatus(PurchaseOrder purchaseOrder) {
+        int totalOrdered = 0;
+        int totalReceived = 0;
+        int totalRemaining = 0;
 
-        // Get PO line
-        PurchaseOrderLine poLine = poLineRepository.findById(lineDTO.getPoLineId())
-                .orElseThrow(() -> new ResourceNotFoundException("PO Line", "id", lineDTO.getPoLineId()));
-
-        // Validate PO line belongs to this PO
-        if (!poLine.getPurchaseOrder().getId().equals(po.getId())) {
-            throw new BusinessException("PO Line does not belong to this Purchase Order");
+        for (PurchaseOrderLine line : purchaseOrder.getLines()) {
+            totalOrdered += line.getQuantity();
+            totalReceived += line.getReceivedQuantity();
+            totalRemaining += line.getRemainingQuantity();
         }
 
-        // Validate received quantity
-        int alreadyReceived = poLine.getReceivedQuantity();
-        int ordered = poLine.getQuantity();
-        int receiving = lineDTO.getReceivedQuantity();
+        PurchaseOrder.POStatus oldStatus = purchaseOrder.getStatus();
+        PurchaseOrder.POStatus newStatus;
 
-        if (alreadyReceived + receiving > ordered) {
-            throw new BusinessException(
-                    String.format("Cannot receive %d units. Ordered: %d, Already received: %d",
-                            receiving, ordered, alreadyReceived)
-            );
+        if (totalRemaining == 0 && totalReceived == totalOrdered) {
+            // Fully received
+            newStatus = PurchaseOrder.POStatus.RECEIVED;
+        } else if (totalReceived > 0 && totalRemaining > 0) {
+            // Partially received
+            newStatus = PurchaseOrder.POStatus.PARTIALLY_RECEIVED;
+        } else {
+            // No change - keep existing status
+            return;
         }
 
-        // Update PO line received quantity
-        poLine.setReceivedQuantity(alreadyReceived + receiving);
-        poLineRepository.save(poLine);
-
-        // Create receipt line
-        GoodsReceiptLine line = new GoodsReceiptLine();
-        line.setReceipt(receipt);
-        line.setPoLine(poLine);
-        line.setProduct(poLine.getProduct());
-        line.setProductName(poLine.getProductName());
-        line.setProductCode(poLine.getProductCode());
-        line.setOrderedQuantity(ordered);
-        line.setReceivedQuantity(receiving);
-        line.setBatchNumber(lineDTO.getBatchNumber());
-        line.setExpiryDate(lineDTO.getExpiryDate());
-        line.setManufactureDate(lineDTO.getManufactureDate());
-        line.setUnitCost(poLine.getUnitPrice());
-        line.setLineTotal(poLine.getUnitPrice().multiply(BigDecimal.valueOf(receiving)));
-        line.setQualityNotes(lineDTO.getQualityNotes());
-
-        return line;
-    }
-
-    /**
-     * Update PO status if fully received
-     */
-    private void updatePurchaseOrderStatus(PurchaseOrder po) {
-        // Check if all lines are fully received
-        boolean fullyReceived = po.getLines().stream()
-                .allMatch(line -> line.getReceivedQuantity() >= line.getQuantity());
-
-        if (fullyReceived && po.getStatus() != POStatus.RECEIVED) {
-            po.setStatus(POStatus.RECEIVED);
-            purchaseOrderRepository.save(po);
-            log.info("PO {} marked as RECEIVED", po.getPoNumber());
-
-            // Send notification for fully received PO
-            sendFullyReceivedNotification(po);
-        }
-    }
-
-    /**
-     * Send receipt notifications
-     */
-    private void sendReceiptNotifications(GoodsReceipt receipt, PurchaseOrder po) {
-        try {
-            // Calculate total quantity
-            int totalQuantity = receipt.getLines().stream()
-                    .mapToInt(GoodsReceiptLine::getReceivedQuantity)
-                    .sum();
-
-            Map<String, String> params = new HashMap<>();
-            params.put("receiptNumber", receipt.getReceiptNumber());
-            params.put("poNumber", po.getPoNumber());
-            params.put("supplierName", receipt.getSupplierName());
-            params.put("totalQuantity", String.valueOf(totalQuantity));
-
-            Map<String, Object> actionData = new HashMap<>();
-            actionData.put("receiptId", receipt.getId());
-            actionData.put("poId", po.getId());
-
-            notificationService.createNotificationFromTemplate(
-                    po.getCreatedBy().getId(),
-                    "GOODS_RECEIVED",
-                    params,
-                    actionData
-            );
-
-            // Notify PO approver if different from creator
-            if (po.getApprovedBy() != null &&
-                    !po.getApprovedBy().getId().equals(po.getCreatedBy().getId())) {
-                notificationService.createNotificationFromTemplate(
-                        po.getApprovedBy().getId(),
-                        "GOODS_RECEIVED",
-                        params,
-                        actionData
-                );
-            }
-
-            log.info("Sent goods receipt notifications for {}", receipt.getReceiptNumber());
-        } catch (Exception e) {
-            log.error("Failed to send receipt notifications: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Send fully received notification
-     */
-    private void sendFullyReceivedNotification(PurchaseOrder po) {
-        try {
-            Map<String, String> params = new HashMap<>();
-            params.put("poNumber", po.getPoNumber());
-
-            Map<String, Object> actionData = new HashMap<>();
-            actionData.put("poId", po.getId());
-
-            notificationService.createNotificationFromTemplate(
-                    po.getCreatedBy().getId(),
-                    "PO_FULLY_RECEIVED",
-                    params,
-                    actionData
-            );
-
-            if (po.getApprovedBy() != null &&
-                    !po.getApprovedBy().getId().equals(po.getCreatedBy().getId())) {
-                notificationService.createNotificationFromTemplate(
-                        po.getApprovedBy().getId(),
-                        "PO_FULLY_RECEIVED",
-                        params,
-                        actionData
-                );
-            }
-        } catch (Exception e) {
-            log.error("Failed to send fully received notification: {}", e.getMessage());
+        if (oldStatus != newStatus) {
+            purchaseOrder.setStatus(newStatus);
+            log.info("PO {} status changed: {} -> {}. Progress: {}/{} items ({}%)",
+                    purchaseOrder.getPoNumber(), oldStatus, newStatus,
+                    totalReceived, totalOrdered,
+                    (totalOrdered > 0 ? (totalReceived * 100 / totalOrdered) : 0));
         }
     }
 
@@ -418,7 +421,11 @@ public class GoodsReceiptService {
         // Update PO line received quantities (reduce back)
         for (GoodsReceiptLine line : receipt.getLines()) {
             PurchaseOrderLine poLine = line.getPoLine();
-            poLine.setReceivedQuantity(poLine.getReceivedQuantity() - line.getReceivedQuantity());
+            int newReceivedQty = poLine.getReceivedQuantity() - line.getReceivedQuantity();
+            int newRemainingQty = poLine.getQuantity() - newReceivedQty;
+
+            poLine.setReceivedQuantity(newReceivedQty);
+            poLine.setRemainingQuantity(newRemainingQty);
             poLineRepository.save(poLine);
         }
 
@@ -447,7 +454,7 @@ public class GoodsReceiptService {
             transaction.setQuantity(quantity);
             transaction.setBalanceAfter(product.getQuantity());
             transaction.setReason(reason);
-            transaction.setPerformedBy(user.getId()); // Pass user ID, not User object
+            transaction.setPerformedBy(user.getId());
             transaction.setTransactionDate(LocalDateTime.now());
 
             stockTransactionRepository.save(transaction);
@@ -455,7 +462,6 @@ public class GoodsReceiptService {
 
         } catch (Exception e) {
             log.error("Failed to create stock transaction: {}", e.getMessage());
-            // Don't fail the entire operation if transaction logging fails
         }
     }
 
@@ -465,26 +471,22 @@ public class GoodsReceiptService {
     private void updateProductAverageCost(Product product, Integer newQuantity, BigDecimal newCost) {
         try {
             if (newCost == null || newCost.compareTo(BigDecimal.ZERO) <= 0) {
-                return; // Skip if cost is not provided or invalid
+                return;
             }
 
-            // Calculate weighted average
-            Integer currentQty = product.getQuantity() - newQuantity; // Stock before this receipt
+            Integer currentQty = product.getQuantity() - newQuantity;
             BigDecimal currentCost = product.getPurchasePrice() != null ?
                     product.getPurchasePrice() : BigDecimal.ZERO;
 
             if (currentQty > 0 && currentCost.compareTo(BigDecimal.ZERO) > 0) {
-                // Weighted average formula
                 BigDecimal totalOldValue = currentCost.multiply(BigDecimal.valueOf(currentQty));
                 BigDecimal totalNewValue = newCost.multiply(BigDecimal.valueOf(newQuantity));
                 BigDecimal totalValue = totalOldValue.add(totalNewValue);
                 BigDecimal totalQuantity = BigDecimal.valueOf(currentQty + newQuantity);
 
-                // Use RoundingMode.HALF_UP instead of deprecated constant
                 BigDecimal averageCost = totalValue.divide(totalQuantity, 2, RoundingMode.HALF_UP);
                 product.setPurchasePrice(averageCost);
             } else {
-                // First purchase or no existing cost
                 product.setPurchasePrice(newCost);
             }
 
@@ -493,7 +495,6 @@ public class GoodsReceiptService {
 
         } catch (Exception e) {
             log.error("Failed to update product average cost: {}", e.getMessage());
-            // Don't fail the entire operation
         }
     }
 
@@ -504,18 +505,11 @@ public class GoodsReceiptService {
                                        int itemsAccepted, boolean onTime) {
         try {
             Long supplierId = receipt.getSupplier().getId();
-
-            // Update quality metrics
             supplierMetricsService.updateQualityMetrics(supplierId, itemsReceived, itemsAccepted);
-
-            // Update delivery metrics
             supplierMetricsService.updateDeliveryMetrics(supplierId, onTime);
-
             log.info("Updated supplier metrics for supplier ID: {}", supplierId);
-
         } catch (Exception e) {
             log.error("Failed to update supplier metrics: {}", e.getMessage());
-            // Don't fail the entire operation
         }
     }
 
@@ -542,7 +536,6 @@ public class GoodsReceiptService {
             );
 
             log.info("Acceptance notification sent for receipt: {}", receipt.getReceiptNumber());
-
         } catch (Exception e) {
             log.error("Failed to send acceptance notification: {}", e.getMessage());
         }
@@ -566,14 +559,12 @@ public class GoodsReceiptService {
                     null
             );
 
-            // TODO: In future, notify supplier if requested
             if (notifySupplier != null && notifySupplier) {
                 log.info("Supplier notification requested for rejected receipt: {}",
                         receipt.getReceiptNumber());
             }
 
             log.info("Rejection notification sent for receipt: {}", receipt.getReceiptNumber());
-
         } catch (Exception e) {
             log.error("Failed to send rejection notification: {}", e.getMessage());
         }

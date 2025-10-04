@@ -105,10 +105,11 @@ public class PurchaseOrder {
     }
 
     public enum POStatus {
-        DRAFT,
-        APPROVED,
-        SENT,
-        RECEIVED,
-        CANCELLED
+        DRAFT,              // Initial state, being created
+        APPROVED,           // Approved by manager
+        SENT,              // Sent to supplier
+        PARTIALLY_RECEIVED, // Some items received, waiting for remaining
+        RECEIVED,          // All items fully received
+        CANCELLED          // Order cancelled
     }
 }

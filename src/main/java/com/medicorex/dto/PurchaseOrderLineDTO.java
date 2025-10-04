@@ -23,5 +23,6 @@ public class PurchaseOrderLineDTO {
     private BigDecimal taxPercentage;
     private BigDecimal lineTotal;
     private Integer receivedQuantity;
+    private Integer remainingQuantity;
     private String notes;
 }

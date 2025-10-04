@@ -2406,6 +2406,76 @@ ON DUPLICATE KEY UPDATE
 -- =====================================================
 
 
+-- =====================================================
+-- Date: 2025-01-05
+-- Feature: Partial Receipt Handling - Phase 4.1
+-- Status: READY TO APPLY
+-- Description: Enable multiple receipts per PO with remaining quantity tracking
+-- =====================================================
+
+-- Add remaining_quantity field to purchase_order_lines
+ALTER TABLE purchase_order_lines
+    ADD COLUMN remaining_quantity INT NOT NULL DEFAULT 0 AFTER received_quantity;
+
+-- Run your update
+UPDATE purchase_order_lines
+SET remaining_quantity = quantity - received_quantity;
+
+-- Add index for efficient queries on remaining quantities
+CREATE INDEX idx_remaining_quantity ON purchase_order_lines(remaining_quantity);
+
+-- ADD THIS: Update status ENUM to include PARTIALLY_RECEIVED
+ALTER TABLE purchase_orders
+    MODIFY COLUMN status ENUM(
+        'DRAFT',
+        'APPROVED',
+        'SENT',
+        'PARTIALLY_RECEIVED',
+        'RECEIVED',
+        'CANCELLED'
+        ) NOT NULL DEFAULT 'DRAFT';
+
+-- Add comment to table
+ALTER TABLE purchase_order_lines
+    COMMENT = 'Purchase order line items with partial receipt tracking';
+
+-- Create view for PO fulfillment status
+CREATE OR REPLACE VIEW po_fulfillment_status AS
+SELECT
+    po.id AS po_id,
+    po.po_number,
+    po.status,
+    COUNT(pol.id) AS total_lines,
+    SUM(pol.quantity) AS total_ordered,
+    SUM(pol.received_quantity) AS total_received,
+    SUM(pol.remaining_quantity) AS total_remaining,
+    ROUND((SUM(pol.received_quantity) / SUM(pol.quantity)) * 100, 2) AS fulfillment_percentage
+FROM purchase_orders po
+         LEFT JOIN purchase_order_lines pol ON po.id = pol.po_id
+GROUP BY po.id, po.po_number, po.status;
+
+-- Add notification template for partial receipt
+INSERT INTO notification_templates (code, title_template, message_template, category, priority, active)
+VALUES
+    ('PO_PARTIALLY_RECEIVED',
+     'Partial Receipt Processed: {{poNumber}}',
+     'Partial receipt {{receiptNumber}} for PO {{poNumber}} has been processed. {{receivedQuantity}} of {{totalQuantity}} items received ({{percentage}}% complete).',
+     'PROCUREMENT',
+     'MEDIUM',
+     true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template);
+
+-- =====================================================
+-- END OF PARTIAL RECEIPT HANDLING SCHEMA CHANGES
+-- =====================================================
+
+
+
+
+
+
 
 
 
