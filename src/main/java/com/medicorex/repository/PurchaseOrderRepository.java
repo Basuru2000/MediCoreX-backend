@@ -53,4 +53,24 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
     @Query("SELECT MAX(CAST(SUBSTRING(po.poNumber, 4) AS int)) FROM PurchaseOrder po " +
             "WHERE po.poNumber LIKE :prefix")
     Integer findMaxPoNumberSequence(@Param("prefix") String prefix);
+
+    /**
+     * Find all partially received purchase orders
+     */
+    @Query("SELECT po FROM PurchaseOrder po WHERE po.status = 'PARTIALLY_RECEIVED'")
+    Page<PurchaseOrder> findPartiallyReceived(Pageable pageable);
+
+    /**
+     * Find POs with remaining quantities
+     */
+    @Query("SELECT DISTINCT po FROM PurchaseOrder po " +
+            "JOIN po.lines line " +
+            "WHERE line.remainingQuantity > 0 " +
+            "AND po.status IN ('SENT', 'PARTIALLY_RECEIVED')")
+    List<PurchaseOrder> findPurchaseOrdersWithRemainingItems();
+
+    @Query("SELECT po FROM PurchaseOrder po " +
+            "WHERE po.status IN ('SENT', 'PARTIALLY_RECEIVED') " +
+            "ORDER BY po.orderDate DESC")
+    List<PurchaseOrder> findEligibleForReceiving();
 }

@@ -54,6 +54,10 @@ public class PurchaseOrderLine {
     @Column(name = "received_quantity")
     private Integer receivedQuantity = 0;
 
+    // ✨ NEW FIELD FOR PARTIAL RECEIPT TRACKING
+    @Column(name = "remaining_quantity", nullable = false)
+    private Integer remainingQuantity = 0;
+
     @Column(columnDefinition = "TEXT")
     private String notes;
 
@@ -68,5 +72,43 @@ public class PurchaseOrderLine {
         BigDecimal taxAmount = afterDiscount.multiply(taxPercentage != null ? taxPercentage : BigDecimal.ZERO).divide(BigDecimal.valueOf(100));
 
         this.lineTotal = afterDiscount.add(taxAmount);
+    }
+
+    /**
+     * Update quantities after receiving items
+     */
+    public void receiveQuantity(int receivedQty) {
+        if (receivedQty < 0) {
+            throw new IllegalArgumentException("Received quantity cannot be negative");
+        }
+        if (this.receivedQuantity + receivedQty > this.quantity) {
+            throw new IllegalArgumentException("Total received quantity cannot exceed ordered quantity");
+        }
+        this.receivedQuantity += receivedQty;
+        this.remainingQuantity = this.quantity - this.receivedQuantity;
+    }
+
+    /**
+     * Check if line is fully received
+     */
+    public boolean isFullyReceived() {
+        return this.remainingQuantity == 0 && this.receivedQuantity.equals(this.quantity);
+    }
+
+    /**
+     * Check if line is partially received
+     */
+    public boolean isPartiallyReceived() {
+        return this.receivedQuantity > 0 && this.remainingQuantity > 0;
+    }
+
+    /**
+     * Initialize remaining quantity (called when PO is created)
+     */
+    @PrePersist
+    public void initializeRemainingQuantity() {
+        if (this.remainingQuantity == null || this.remainingQuantity == 0) {
+            this.remainingQuantity = this.quantity - (this.receivedQuantity != null ? this.receivedQuantity : 0);
+        }
     }
 }

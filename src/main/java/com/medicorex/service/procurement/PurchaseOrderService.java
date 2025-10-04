@@ -333,6 +333,16 @@ public class PurchaseOrderService {
     }
 
     /**
+     * Get eligible purchase orders for receiving
+     */
+    @Transactional(readOnly = true)
+    public List<PurchaseOrderDTO> getEligibleForReceiving() {
+        return purchaseOrderRepository.findEligibleForReceiving().stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * Request approval for purchase order (sends notification to managers)
      */
     public void requestApproval(Long id) {
@@ -730,6 +740,7 @@ public class PurchaseOrderService {
                 .taxPercentage(line.getTaxPercentage())
                 .lineTotal(line.getLineTotal())
                 .receivedQuantity(line.getReceivedQuantity())
+                .remainingQuantity(line.getRemainingQuantity())  // ✨ NEW FIELD
                 .notes(line.getNotes())
                 .build();
     }

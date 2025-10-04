@@ -158,4 +158,10 @@ public class PurchaseOrderController {
 
         return ResponseEntity.ok(purchaseOrderService.updateStatusWithComments(id, status, comments));
     }
+
+    @GetMapping("/eligible-for-receiving")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<List<PurchaseOrderDTO>> getEligibleForReceiving() {
+        return ResponseEntity.ok(purchaseOrderService.getEligibleForReceiving());
+    }
 }
