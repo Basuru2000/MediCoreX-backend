@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableScheduling  // For scheduled tasks
-@EnableAsync       // CRITICAL: Enable async for notifications
+@EnableAsync       // Enable async for notifications
 public class MedicorexApplication {
 
     public static void main(String[] args) {
