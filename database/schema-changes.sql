@@ -2585,7 +2585,96 @@ VALUES
 -- =====================================================
 
 
+-- =====================================================
+-- Date: 2025-01-07
+-- Feature: Automated PO Generation - Phase 4.3
+-- Status: READY TO APPLY
+-- Description: Enable automated purchase order creation for low-stock products
+-- =====================================================
 
+-- 1. Add auto_generated flag to purchase_orders table
+ALTER TABLE purchase_orders
+    ADD COLUMN auto_generated BOOLEAN NOT NULL DEFAULT FALSE AFTER rejection_comments,
+    ADD INDEX idx_auto_generated (auto_generated);
+
+-- 2. Create Auto PO Configuration table
+CREATE TABLE IF NOT EXISTS auto_po_configuration (
+                                                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                                     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                                     schedule_cron VARCHAR(50) NOT NULL DEFAULT '0 0 2 * * ?', -- Run at 2 AM daily
+                                                     reorder_multiplier DECIMAL(3,2) NOT NULL DEFAULT 2.00,  -- Order 2x min stock
+                                                     days_until_delivery INT NOT NULL DEFAULT 7,  -- Expected delivery in 7 days
+                                                     min_po_value DECIMAL(12,2) DEFAULT 100.00,  -- Minimum PO value to generate
+                                                     only_preferred_suppliers BOOLEAN NOT NULL DEFAULT TRUE,
+                                                     auto_approve BOOLEAN NOT NULL DEFAULT FALSE,  -- Keep in DRAFT for review
+                                                     notification_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                                     notify_roles VARCHAR(200) DEFAULT 'HOSPITAL_MANAGER,PROCUREMENT_OFFICER',
+                                                     last_run_at TIMESTAMP NULL,
+                                                     last_run_status VARCHAR(20) NULL,  -- SUCCESS, FAILED, PARTIAL
+                                                     last_run_details TEXT NULL,  -- JSON with generation details
+                                                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                                                     CHECK (reorder_multiplier >= 1.0 AND reorder_multiplier <= 10.0),
+                                                     CHECK (days_until_delivery >= 1 AND days_until_delivery <= 90)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 3. Insert default configuration
+INSERT INTO auto_po_configuration (
+    enabled,
+    schedule_cron,
+    reorder_multiplier,
+    days_until_delivery,
+    min_po_value,
+    only_preferred_suppliers,
+    auto_approve,
+    notification_enabled,
+    notify_roles
+) VALUES (
+             TRUE,                      -- enabled
+             '0 0 2 * * ?',            -- 2 AM daily
+             2.00,                      -- Order 2x min stock
+             7,                         -- 7 days delivery
+             100.00,                    -- Min $100 PO value
+             TRUE,                      -- Only preferred suppliers
+             FALSE,                     -- Keep as DRAFT
+             TRUE,                      -- Send notifications
+             'HOSPITAL_MANAGER,PROCUREMENT_OFFICER'  -- Notify these roles
+         );
+
+-- 4. Add notification templates for auto-generated POs
+INSERT INTO notification_templates (code, title_template, message_template, category, priority, active)
+VALUES
+    ('AUTO_PO_GENERATED',
+     'Auto-Generated PO Created: {{poNumber}}',
+     'System automatically created purchase order {{poNumber}} for {{itemCount}} low-stock items. Total value: ${{totalAmount}}. Please review and approve.',
+     'PROCUREMENT',
+     'HIGH',
+     true),
+
+    ('AUTO_PO_GENERATION_FAILED',
+     'Auto PO Generation Failed',
+     'Automated PO generation job failed. Reason: {{failureReason}}. Please check configuration and try again.',
+     'SYSTEM',
+     'HIGH',
+     true),
+
+    ('AUTO_PO_BATCH_SUMMARY',
+     'Auto PO Daily Summary',
+     'Generated {{poCount}} purchase orders for {{productCount}} low-stock products. Total value: ${{totalValue}}.',
+     'PROCUREMENT',
+     'MEDIUM',
+     true)
+ON DUPLICATE KEY UPDATE
+                     title_template = VALUES(title_template),
+                     message_template = VALUES(message_template);
+
+-- 5. Create index for low-stock product queries
+CREATE INDEX idx_products_low_stock ON products(quantity, min_stock);
+
+-- =====================================================
+-- END OF AUTO PO GENERATION SCHEMA CHANGES
+-- =====================================================
 
 
 
