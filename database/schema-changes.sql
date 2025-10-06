@@ -34,6 +34,19 @@ CREATE TABLE IF NOT EXISTS users (
                                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Suppliers table
+CREATE TABLE IF NOT EXISTS suppliers (
+                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                         name VARCHAR(100) NOT NULL,
+                                         contact_email VARCHAR(100) UNIQUE NOT NULL,
+                                         phone VARCHAR(20),
+                                         address TEXT,
+                                         contact_person VARCHAR(100),
+                                         active BOOLEAN DEFAULT TRUE,
+                                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 -- Products table
 CREATE TABLE IF NOT EXISTS products (
                                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -53,20 +66,13 @@ CREATE TABLE IF NOT EXISTS products (
                                         FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
--- Insert initial categories
-INSERT INTO categories (name, description) VALUES
-                                               ('Medications', 'Pharmaceutical drugs and medicines'),
-                                               ('Medical Supplies', 'Consumable medical supplies'),
-                                               ('Equipment', 'Medical equipment and devices')
-ON DUPLICATE KEY UPDATE name=name;
-
 -- =====================================================
 -- Date: 2024-01-15
 -- Feature: Stock Management (Week 3)
 -- Developer: Week 3 Implementation
 -- Status: APPLIED ✓
 -- =====================================================
--- Stock transactions table for tracking all inventory movements
+-- Stock transactions table (Week 3 addition)
 CREATE TABLE IF NOT EXISTS stock_transactions (
                                                   id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                                   product_id BIGINT NOT NULL,
@@ -81,16 +87,23 @@ CREATE TABLE IF NOT EXISTS stock_transactions (
                                                   FOREIGN KEY (performed_by) REFERENCES users(id)
 );
 
+-- Insert initial data
+INSERT INTO categories (name, description) VALUES
+                                               ('Medications', 'Pharmaceutical drugs and medicines'),
+                                               ('Medical Supplies', 'Consumable medical supplies'),
+                                               ('Equipment', 'Medical equipment and devices')
+ON DUPLICATE KEY UPDATE name=name; -- Prevents duplicate entries
+
 -- =====================================================
 -- Date: 2024-01-20
 -- Feature: Product Image Support
 -- Developer: Week 3-4 Implementation
 -- Status: APPLIED ✓
 -- =====================================================
--- Add image URL column to products
+-- Add image_url column to products table
 ALTER TABLE products ADD COLUMN image_url VARCHAR(500) AFTER manufacturer;
 
--- Create file uploads tracking table
+-- Create file_uploads table for tracking uploads
 CREATE TABLE IF NOT EXISTS file_uploads (
                                             id BIGINT AUTO_INCREMENT PRIMARY KEY,
                                             file_name VARCHAR(255) NOT NULL,
@@ -108,15 +121,15 @@ CREATE TABLE IF NOT EXISTS file_uploads (
 -- Developer: Week 3-4 Implementation
 -- Status: APPLIED ✓
 -- =====================================================
--- Add parent_id for nested categories
+-- Add parent_id column to categories table
 ALTER TABLE categories ADD COLUMN parent_id BIGINT AFTER description;
 
--- Add foreign key constraint for parent-child relationship
+-- Add foreign key constraint
 ALTER TABLE categories
     ADD CONSTRAINT fk_category_parent
         FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE RESTRICT;
 
--- Add index for better performance on hierarchy queries
+-- Add index for better performance
 CREATE INDEX idx_category_parent ON categories(parent_id);
 
 -- =====================================================
@@ -125,16 +138,18 @@ CREATE INDEX idx_category_parent ON categories(parent_id);
 -- Developer: Enhancement Implementation
 -- Status: APPLIED ✓
 -- =====================================================
--- Add gender column with default value
-ALTER TABLE users ADD COLUMN gender VARCHAR(20) DEFAULT 'NOT_SPECIFIED' AFTER role;
 
+-- Add gender and profile_image_url columns to users table
+ALTER TABLE users ADD COLUMN gender VARCHAR(20) DEFAULT 'NOT_SPECIFIED' AFTER role;
 -- Add profile image URL column
 ALTER TABLE users ADD COLUMN profile_image_url VARCHAR(500) AFTER gender;
 
 -- Update existing users to have gender value
--- Note: Requires disabling safe mode
+-- Temporarily disable safe mode
 SET SQL_SAFE_UPDATES = 0;
+-- Run your update
 UPDATE users SET gender = 'NOT_SPECIFIED' WHERE gender IS NULL;
+-- Re-enable safe mode
 SET SQL_SAFE_UPDATES = 1;
 
 -- =====================================================
@@ -143,6 +158,7 @@ SET SQL_SAFE_UPDATES = 1;
 -- Developer: Week 3-4 Enhancement
 -- Status: APPLIED ✓
 -- =====================================================
+
 -- Add barcode and QR code columns to products
 ALTER TABLE products ADD COLUMN barcode VARCHAR(100) UNIQUE AFTER code;
 ALTER TABLE products ADD COLUMN qr_code TEXT AFTER barcode;
@@ -150,12 +166,14 @@ ALTER TABLE products ADD COLUMN qr_code TEXT AFTER barcode;
 -- Create index for faster barcode lookups
 CREATE INDEX idx_product_barcode ON products(barcode);
 
+
 -- =====================================================
 -- Date: 2024-01-XX (Update with actual date)
 -- Feature: Multi-tier Alert Configuration (Week 5)
 -- Developer: Week 5 Implementation
 -- Status: APPLIED ✓
 -- =====================================================
+
 -- Expiry Alert Configuration table
 CREATE TABLE IF NOT EXISTS expiry_alert_configs (
                                                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -205,8 +223,8 @@ INSERT INTO expiry_alert_configs (tier_name, days_before_expiry, severity, descr
 ON DUPLICATE KEY UPDATE tier_name=tier_name;
 
 -- Add index for better query performance on products table
--- Note: This uses standard MySQL syntax, not conditional index
 CREATE INDEX idx_product_expiry ON products(expiry_date);
+
 
 -- =====================================================
 -- Date: 2024-02-XX
@@ -214,6 +232,7 @@ CREATE INDEX idx_product_expiry ON products(expiry_date);
 -- Developer: Week 5 Implementation
 -- Status: PENDING
 -- =====================================================
+
 -- Expiry Check Log table to track scheduled job execution
 CREATE TABLE IF NOT EXISTS expiry_check_logs (
                                                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -231,8 +250,9 @@ CREATE TABLE IF NOT EXISTS expiry_check_logs (
                                                  INDEX idx_status_date (status, check_date)
 );
 
--- Add composite index for efficient expiry date queries
+-- Add index for efficient expiry date queries
 CREATE INDEX idx_product_expiry_quantity ON products(expiry_date, quantity);
+
 
 -- Add batch processing status to alerts
 ALTER TABLE expiry_alerts
@@ -241,35 +261,12 @@ ALTER TABLE expiry_alerts
         FOREIGN KEY (check_log_id) REFERENCES expiry_check_logs(id);
 
 
--- =====================================================
--- Date: 2024-02-XX (Update with today's date)
--- Feature: Allow Multiple Manual Expiry Checks (Week 5 Enhancement)
--- Developer: Week 5 Implementation
--- Status: PENDING -> Change to APPLIED ✓ after running
--- =====================================================
 -- Purpose: Remove unique constraint on check_date to allow multiple manual checks
 -- during development and testing. The application logic controls whether
 -- multiple checks are allowed based on configuration.
-
--- Check if the constraint exists before dropping
--- Note: The constraint name might vary, check with:
--- SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
--- WHERE TABLE_SCHEMA = 'medicorex_db' AND TABLE_NAME = 'expiry_check_logs' AND CONSTRAINT_TYPE = 'UNIQUE';
-
 -- Drop the unique constraint on check_date
 ALTER TABLE expiry_check_logs DROP INDEX unique_check_date;
-
--- Add a composite index for better query performance
--- This maintains fast lookups while allowing multiple checks per date
 CREATE INDEX idx_check_date_status ON expiry_check_logs(check_date, status);
-
--- Add index for queries by date and start time
-CREATE INDEX idx_check_date_start_time ON expiry_check_logs(check_date, start_time DESC);
-
--- Note: After applying this change, the application can be configured to:
--- 1. Allow multiple manual checks: expiry.check.allow-multiple-manual=true
--- 2. Restrict to one check per day: expiry.check.allow-multiple-manual=false
---    (restriction handled at application level, not database level)
 
 
 -- =====================================================
@@ -366,11 +363,6 @@ BEGIN
     WHERE id = NEW.product_id;
 END$$
 DELIMITER ;
-
-
--- =====================================================
--- END OF BATCH TRACKING SCHEMA CHANGES
--- =====================================================
 
 -- =====================================================
 -- Date: 2024-02-XX (Update with actual date)
@@ -758,10 +750,10 @@ WHERE NOT EXISTS (
     SELECT 1 FROM notification_templates WHERE code = 'QUARANTINE_NOTIFICATION'
 );
 
-
 -- =====================================================
 -- END OF NOTIFICATION SYSTEM SCHEMA CHANGES
 -- =====================================================
+
 
 -- =====================================================
 -- Date: 2024-02-XX (Update with actual date)
@@ -1017,7 +1009,6 @@ DELIMITER ;
 -- END OF NOTIFICATION PREFERENCES SCHEMA CHANGES
 -- =====================================================
 
-
 -- =====================================================
 -- Phase 3.1: Critical Alerts Summary Widget
 -- Date: Current Implementation
@@ -1199,7 +1190,8 @@ END$$
 DELIMITER ;
 
 -- Schedule the cache refresh (if using MySQL events)
--- Note: Ensure event scheduler is enabled: SET GLOBAL event_scheduler = ON;
+-- Note: Ensure event scheduler is enabled:
+SET GLOBAL event_scheduler = ON;
 CREATE EVENT IF NOT EXISTS refresh_expiry_summary_event
     ON SCHEDULE EVERY 1 HOUR
     DO CALL RefreshExpirySummaryCache();
@@ -1317,6 +1309,61 @@ BEGIN
            v_previous_expired as previous_avg;
 END$$
 
+DELIMITER ;
+
+
+
+
+-- Generate 90 days of historical data with varied trends
+DELIMITER $$
+CREATE PROCEDURE GenerateCompleteTrendData()
+BEGIN
+    DECLARE v_date DATE;
+    DECLARE v_counter INT DEFAULT 0;
+
+    SET v_date = DATE_SUB(CURDATE(), INTERVAL 90 DAY);
+
+    WHILE v_counter < 90 DO
+            INSERT IGNORE INTO expiry_trend_snapshots (
+                snapshot_date,
+                total_products,
+                expired_count,
+                expiring_7_days,
+                expiring_30_days,
+                expiring_60_days,
+                expiring_90_days,
+                expired_value,
+                expiring_7_days_value,
+                expiring_30_days_value,
+                avg_days_to_expiry,
+                critical_category_id,
+                critical_category_name,
+                critical_category_count,
+                trend_direction,
+                trend_percentage
+            ) VALUES (
+                         v_date,
+                         100 + FLOOR(RAND() * 20),
+                         3 + FLOOR(RAND() * 10),
+                         5 + FLOOR(RAND() * 15),
+                         15 + FLOOR(RAND() * 25),
+                         25 + FLOOR(RAND() * 35),
+                         35 + FLOOR(RAND() * 45),
+                         300 + (RAND() * 1000),
+                         500 + (RAND() * 1500),
+                         1500 + (RAND() * 2500),
+                         30 + (RAND() * 30),
+                         1,
+                         'Medications',
+                         5 + FLOOR(RAND() * 10),
+                         ELT(1 + FLOOR(RAND() * 3), 'IMPROVING', 'STABLE', 'WORSENING'),
+                         -30 + (RAND() * 60)
+                     );
+
+            SET v_counter = v_counter + 1;
+            SET v_date = DATE_ADD(v_date, INTERVAL 1 DAY);
+        END WHILE;
+END$$
 DELIMITER ;
 
 -- =====================================================
@@ -1474,6 +1521,7 @@ CALL RefreshExpiryCalendarCache(
         CURDATE(),
         DATE_ADD(CURDATE(), INTERVAL 90 DAY)
      );
+
 
 -- Run this SQL script to add missing indexes
 -- Compatible with MySQL versions before 8.0.13
@@ -1990,7 +2038,6 @@ WHERE id IN (SELECT DISTINCT supplier_id FROM supplier_metrics);
 -- 3. Re-enable safe mode
 SET SQL_SAFE_UPDATES = 1;
 
-
 -- =====================================================
 -- Date: 2024-XX-XX
 -- Feature: Document Management Indexes and Updates
@@ -2096,6 +2143,7 @@ GROUP BY po.id, po.po_number, po.status, po.total_amount;
 -- END OF PURCHASE ORDER SCHEMA CHANGES
 -- =====================================================
 
+
 -- =====================================================
 -- Date: 2025-01-02
 -- Feature: Purchase Order Approval Process - Phase 2.2
@@ -2134,6 +2182,7 @@ GROUP BY po.id, po.po_number, po.supplier_id, s.name, po.order_date,
 -- =====================================================
 -- END OF APPROVAL PROCESS SCHEMA CHANGES
 -- =====================================================
+
 -- =====================================================
 -- Notification Templates for PO Approval Process
 -- =====================================================
@@ -2471,7 +2520,6 @@ ON DUPLICATE KEY UPDATE
 -- END OF PARTIAL RECEIPT HANDLING SCHEMA CHANGES
 -- =====================================================
 
-
 -- =====================================================
 -- Date: 2025-01-06
 -- Feature: Quality Inspection Checklist - Phase 4.2
@@ -2680,8 +2728,9 @@ CREATE INDEX idx_products_low_stock ON products(quantity, min_stock);
 -- =====================================================
 -- PHASE 4.4: PO ANALYTICS DASHBOARD VIEWS
 -- =====================================================
-
+-- =====================================================
 -- View 1: Purchase Order Analytics Summary View
+-- =====================================================
 CREATE OR REPLACE VIEW purchase_order_analytics_view AS
 SELECT
     po.id,
@@ -2710,8 +2759,9 @@ SELECT
 FROM purchase_orders po
          INNER JOIN suppliers s ON po.supplier_id = s.id;
 
-
+-- =====================================================
 -- View 2: Monthly PO Trends
+-- =====================================================
 CREATE OR REPLACE VIEW po_monthly_trends AS
 SELECT
     DATE_FORMAT(order_date, '%Y-%m') as month,
@@ -2727,8 +2777,9 @@ WHERE order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH)
 GROUP BY DATE_FORMAT(order_date, '%Y-%m')
 ORDER BY month DESC;
 
-
+-- =====================================================
 -- View 3: Supplier Performance Analytics
+-- =====================================================
 CREATE OR REPLACE VIEW supplier_performance_analytics AS
 SELECT
     s.id as supplier_id,
@@ -2750,8 +2801,9 @@ FROM suppliers s
          LEFT JOIN purchase_orders po ON s.id = po.supplier_id
 GROUP BY s.id, s.name, s.code;
 
-
+-- =====================================================
 -- View 4: PO Status Distribution
+-- =====================================================
 CREATE OR REPLACE VIEW po_status_distribution AS
 SELECT
     status,
@@ -2761,16 +2813,12 @@ SELECT
 FROM purchase_orders
 GROUP BY status;
 
-
+-- =====================================================
 -- Indexes for Performance Optimization
+-- =====================================================
 CREATE INDEX idx_po_order_date_month ON purchase_orders(order_date);
 CREATE INDEX idx_po_created_approved ON purchase_orders(created_at, approved_date);
 CREATE INDEX idx_po_supplier_status ON purchase_orders(supplier_id, status);
-
-
-
-
-
 
 
 -- =====================================================
@@ -2801,6 +2849,8 @@ CREATE INDEX idx_po_supplier_status ON purchase_orders(supplier_id, status);
 --    - Update the total tables count
 -- =====================================================
 
+
 -- =====================================================
 -- END OF SCHEMA CHANGES
 -- =====================================================
+
