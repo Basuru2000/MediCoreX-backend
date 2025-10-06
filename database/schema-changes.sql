@@ -2677,11 +2677,106 @@ CREATE INDEX idx_products_low_stock ON products(quantity, min_stock);
 -- =====================================================
 
 
+-- =====================================================
+-- PHASE 4.4: PO ANALYTICS DASHBOARD VIEWS
+-- =====================================================
+
+-- View 1: Purchase Order Analytics Summary View
+CREATE OR REPLACE VIEW purchase_order_analytics_view AS
+SELECT
+    po.id,
+    po.po_number,
+    po.order_date,
+    po.expected_delivery_date,
+    po.status,
+    po.total_amount,
+    po.approved_date,
+    po.created_at,
+    s.id as supplier_id,
+    s.name as supplier_name,
+    s.code as supplier_code,
+    TIMESTAMPDIFF(HOUR, po.created_at, po.approved_date) as approval_time_hours,
+    (SELECT COUNT(*) FROM purchase_order_lines WHERE po_id = po.id) as line_items_count,
+    (SELECT SUM(quantity) FROM purchase_order_lines WHERE po_id = po.id) as total_items,
+    (SELECT SUM(received_quantity) FROM purchase_order_lines WHERE po_id = po.id) as total_received,
+    CASE
+        WHEN po.status = 'RECEIVED' THEN 100
+        WHEN (SELECT SUM(quantity) FROM purchase_order_lines WHERE po_id = po.id) > 0
+            THEN ((SELECT SUM(received_quantity) FROM purchase_order_lines WHERE po_id = po.id) * 100.0 /
+                  (SELECT SUM(quantity) FROM purchase_order_lines WHERE po_id = po.id))
+        ELSE 0
+        END as fulfillment_percentage,
+    po.auto_generated
+FROM purchase_orders po
+         INNER JOIN suppliers s ON po.supplier_id = s.id;
+
+
+-- View 2: Monthly PO Trends
+CREATE OR REPLACE VIEW po_monthly_trends AS
+SELECT
+    DATE_FORMAT(order_date, '%Y-%m') as month,
+    COUNT(*) as po_count,
+    SUM(total_amount) as total_value,
+    AVG(total_amount) as avg_po_value,
+    SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END) as approved_count,
+    SUM(CASE WHEN status = 'RECEIVED' THEN 1 ELSE 0 END) as received_count,
+    SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled_count,
+    AVG(TIMESTAMPDIFF(HOUR, created_at, approved_date)) as avg_approval_time_hours
+FROM purchase_orders
+WHERE order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH)
+GROUP BY DATE_FORMAT(order_date, '%Y-%m')
+ORDER BY month DESC;
+
+
+-- View 3: Supplier Performance Analytics
+CREATE OR REPLACE VIEW supplier_performance_analytics AS
+SELECT
+    s.id as supplier_id,
+    s.name as supplier_name,
+    s.code as supplier_code,
+    COUNT(po.id) as total_pos,
+    SUM(po.total_amount) as total_value,
+    AVG(po.total_amount) as avg_po_value,
+    SUM(CASE WHEN po.status = 'RECEIVED' THEN 1 ELSE 0 END) as completed_pos,
+    SUM(CASE WHEN po.status = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled_pos,
+    CASE
+        WHEN COUNT(po.id) > 0
+            THEN (SUM(CASE WHEN po.status = 'RECEIVED' THEN 1 ELSE 0 END) * 100.0 / COUNT(po.id))
+        ELSE 0
+        END as completion_rate,
+    AVG(TIMESTAMPDIFF(HOUR, po.created_at, po.approved_date)) as avg_approval_time_hours,
+    MAX(po.order_date) as last_order_date
+FROM suppliers s
+         LEFT JOIN purchase_orders po ON s.id = po.supplier_id
+GROUP BY s.id, s.name, s.code;
+
+
+-- View 4: PO Status Distribution
+CREATE OR REPLACE VIEW po_status_distribution AS
+SELECT
+    status,
+    COUNT(*) as count,
+    SUM(total_amount) as total_value,
+    AVG(total_amount) as avg_value
+FROM purchase_orders
+GROUP BY status;
+
+
+-- Indexes for Performance Optimization
+CREATE INDEX idx_po_order_date_month ON purchase_orders(order_date);
+CREATE INDEX idx_po_created_approved ON purchase_orders(created_at, approved_date);
+CREATE INDEX idx_po_supplier_status ON purchase_orders(supplier_id, status);
+
+
+
+
+
 
 
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
+
 
 -- =====================================================
 -- HOW TO USE THIS FILE
