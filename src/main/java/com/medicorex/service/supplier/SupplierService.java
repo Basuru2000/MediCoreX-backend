@@ -191,6 +191,24 @@ public class SupplierService {
         return convertContactToDTO(savedContact);
     }
 
+    public SupplierContactDTO updateContact(Long contactId, SupplierContactDTO contactDTO) {
+        SupplierContact contact = contactRepository.findById(contactId)
+                .orElseThrow(() -> new ResourceNotFoundException("Supplier Contact", "id", contactId));
+
+        contact.setName(contactDTO.getName());
+        contact.setDesignation(contactDTO.getDesignation());
+        contact.setEmail(contactDTO.getEmail());
+        contact.setPhone(contactDTO.getPhone());
+        contact.setMobile(contactDTO.getMobile());
+        contact.setIsPrimary(contactDTO.getIsPrimary());
+        contact.setNotes(contactDTO.getNotes());
+
+        SupplierContact updated = contactRepository.save(contact);
+        log.info("Updated contact: {} for supplier: {}", updated.getName(), updated.getSupplier().getName());
+
+        return convertContactToDTO(updated);
+    }
+
     public void deleteContact(Long contactId) {
         contactRepository.deleteById(contactId);
     }

@@ -110,6 +110,14 @@ public class SupplierController {
                 .body(supplierService.addContact(id, contactDTO));
     }
 
+    @PutMapping("/contacts/{contactId}")
+    @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
+    public ResponseEntity<SupplierContactDTO> updateContact(
+            @PathVariable Long contactId,
+            @Valid @RequestBody SupplierContactDTO contactDTO) {
+        return ResponseEntity.ok(supplierService.updateContact(contactId, contactDTO));
+    }
+
     @DeleteMapping("/contacts/{contactId}")
     @PreAuthorize("hasAnyRole('HOSPITAL_MANAGER', 'PROCUREMENT_OFFICER')")
     public ResponseEntity<Void> deleteContact(@PathVariable Long contactId) {
