@@ -11,6 +11,7 @@ import com.medicorex.exception.ResourceNotFoundException;
 import com.medicorex.repository.ProductRepository;
 import com.medicorex.repository.StockTransactionRepository;
 import com.medicorex.repository.UserRepository;
+import com.medicorex.service.ProductBatchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -33,33 +34,75 @@ public class StockService {
     private final StockTransactionRepository stockTransactionRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final ProductBatchService batchService;
 
+    @Transactional
     public void adjustStock(StockAdjustmentDTO adjustmentDTO) {
         Product product = productRepository.findById(adjustmentDTO.getProductId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", "id", adjustmentDTO.getProductId()));
 
         // Validate stock adjustment
         int oldQuantity = product.getQuantity();
-        int newQuantity = oldQuantity + adjustmentDTO.getQuantity();
+        int adjustmentQuantity = adjustmentDTO.getQuantity();
+        int newQuantity = oldQuantity + adjustmentQuantity;
+
+        log.info("Stock adjustment requested for product: {} | Current: {} | Adjustment: {} | New: {}",
+                product.getName(), oldQuantity, adjustmentQuantity, newQuantity);
 
         if (newQuantity < 0) {
             throw new BusinessException("Insufficient stock. Current quantity: " + oldQuantity);
         }
 
-        // Update product quantity
-        product.setQuantity(newQuantity);
-        product.setLastUpdated(LocalDateTime.now());
-        product.setLastStockCheck(LocalDateTime.now());
-        productRepository.save(product);
+        // === CRITICAL FIX: Handle batch consumption for stock reductions ===
+        if (adjustmentQuantity < 0) {
+            // Stock is being reduced - consume from batches using FIFO
+            int quantityToConsume = Math.abs(adjustmentQuantity);
 
-        // Create stock transaction record
+            try {
+                log.info("Consuming {} units from batches using FIFO for product: {}",
+                        quantityToConsume, product.getName());
+
+                // Use batch service to consume stock via FIFO
+                List<ProductBatchService.BatchConsumptionResult> consumptionResults =
+                        batchService.consumeStock(
+                                product.getId(),
+                                quantityToConsume,
+                                adjustmentDTO.getNotes() != null ?
+                                        adjustmentDTO.getNotes() :
+                                        "Stock adjustment - " + adjustmentDTO.getType()
+                        );
+
+                log.info("Successfully consumed stock from {} batch(es)", consumptionResults.size());
+
+                // The batch service already updated product total quantity
+                // Refresh product entity to get updated quantity
+                product = productRepository.findById(product.getId()).orElseThrow();
+                newQuantity = product.getQuantity();
+
+            } catch (Exception e) {
+                log.error("Batch consumption failed: {}", e.getMessage());
+                throw new BusinessException("Failed to consume stock from batches: " + e.getMessage());
+            }
+        } else if (adjustmentQuantity > 0) {
+            // Stock is being added - just update product total
+            // Note: Actual batch creation should be done via goods receipt or manual batch creation
+            product.setQuantity(newQuantity);
+            product.setLastUpdated(LocalDateTime.now());
+            product.setLastStockCheck(LocalDateTime.now());
+            productRepository.save(product);
+
+            log.info("Stock increased. New quantity: {}", newQuantity);
+        }
+
+        // Create stock transaction record for audit trail
         StockTransaction transaction = new StockTransaction();
         transaction.setProduct(product);
         transaction.setTransactionType(TransactionType.fromString(adjustmentDTO.getType()));
-        transaction.setQuantity(Math.abs(adjustmentDTO.getQuantity()));
-        transaction.setBalanceAfter(newQuantity); // Required field from original schema
-        transaction.setType(adjustmentDTO.getType().toUpperCase()); // Required field from original schema
-        transaction.setReason(adjustmentDTO.getNotes() != null ? adjustmentDTO.getNotes() : "Stock adjustment"); // Required field
+        transaction.setQuantity(Math.abs(adjustmentQuantity));
+        transaction.setBalanceAfter(newQuantity);
+        transaction.setType(adjustmentDTO.getType().toUpperCase());
+        transaction.setReason(adjustmentDTO.getNotes() != null ?
+                adjustmentDTO.getNotes() : "Stock adjustment");
         transaction.setTransactionDate(LocalDateTime.now());
         transaction.setReference(adjustmentDTO.getReference());
         transaction.setNotes(adjustmentDTO.getNotes());
@@ -69,16 +112,17 @@ public class StockService {
         transaction.setCreatedAt(LocalDateTime.now());
         stockTransactionRepository.save(transaction);
 
+        log.info("Stock transaction recorded: ID {}", transaction.getId());
+
         // ===== NOTIFICATION TRIGGERS =====
         try {
             // 1. Send stock adjustment notification
             Map<String, String> params = new HashMap<>();
             params.put("productName", product.getName());
             params.put("adjustmentType", adjustmentDTO.getType().toLowerCase());
-            params.put("quantity", String.valueOf(Math.abs(adjustmentDTO.getQuantity())));
+            params.put("quantity", String.valueOf(Math.abs(adjustmentQuantity)));
             params.put("newQuantity", String.valueOf(newQuantity));
 
-            // Notify relevant users
             List<String> roles = Arrays.asList("HOSPITAL_MANAGER", "PHARMACY_STAFF");
             notificationService.notifyUsersByRole(roles, "STOCK_ADJUSTED", params,
                     Map.of("productId", product.getId(), "transactionId", transaction.getId()));
@@ -103,7 +147,7 @@ public class StockService {
                         Map.of("productId", product.getId()));
             }
 
-            log.info("Stock adjusted for product: {} by user ID: {}", product.getName(), getCurrentUserId());
+            log.info("✅ Stock adjustment completed successfully for product: {}", product.getName());
 
         } catch (Exception e) {
             log.error("Failed to send stock adjustment notifications: {}", e.getMessage());
@@ -134,8 +178,8 @@ public class StockService {
 
     private Long getCurrentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.isAuthenticated() && 
-            !authentication.getName().equals("anonymousUser")) {
+        if (authentication != null && authentication.isAuthenticated() &&
+                !authentication.getName().equals("anonymousUser")) {
             try {
                 String username = authentication.getName();
                 User user = userRepository.findByUsername(username).orElse(null);
@@ -146,7 +190,7 @@ public class StockService {
                 log.warn("Failed to get current user ID: {}", e.getMessage());
             }
         }
-        
+
         // Fallback to system user or create if doesn't exist
         User systemUser = userRepository.findByUsername("SYSTEM").orElse(null);
         if (systemUser == null) {
