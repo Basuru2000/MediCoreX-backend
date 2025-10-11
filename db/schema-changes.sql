@@ -2821,6 +2821,27 @@ CREATE INDEX idx_po_created_approved ON purchase_orders(created_at, approved_dat
 CREATE INDEX idx_po_supplier_status ON purchase_orders(supplier_id, status);
 
 
+
+-- =====================================================
+-- Date: 2025-01-XX
+-- Feature: Expiry Timeline Enhancement
+-- Status: READY TO APPLY
+-- Description: Optimize queries for timeline view
+-- =====================================================
+
+-- Add composite index for efficient timeline queries
+-- (Will show warning if already exists, but won't break anything)
+CREATE INDEX idx_batch_expiry_status_product
+    ON product_batches(expiry_date, status, product_id);
+
+-- Add index for value calculations
+CREATE INDEX idx_batch_cost_quantity
+    ON product_batches(cost_per_unit, quantity, status);
+
+-- =====================================================
+-- END OF EXPIRY TIMELINE ENHANCEMENT
+-- =====================================================
+
 -- =====================================================
 -- UPCOMING CHANGES
 -- =====================================================
