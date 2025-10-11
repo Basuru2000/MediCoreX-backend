@@ -462,19 +462,15 @@ public class ProductBatchService {
         List<ProductBatch> allBatches = batchRepository.findAll();
         LocalDate today = LocalDate.now();
 
-        // Count batches by status
+        // Existing counts
         long totalBatches = allBatches.size();
         long activeBatches = allBatches.stream()
                 .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
-                .count();
-        long expiredBatches = allBatches.stream()
-                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.EXPIRED)
                 .count();
         long quarantinedBatches = allBatches.stream()
                 .filter(b -> b.getStatus() == ProductBatch.BatchStatus.QUARANTINED)
                 .count();
 
-        // Get expiring batches count
         LocalDate thirtyDaysFromNow = today.plusDays(30);
         long expiringBatches = allBatches.stream()
                 .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
@@ -482,9 +478,17 @@ public class ProductBatchService {
                 .filter(b -> b.getExpiryDate().isAfter(today) && b.getExpiryDate().isBefore(thirtyDaysFromNow))
                 .count();
 
+        long expiredBatches = allBatches.stream()
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.EXPIRED ||
+                        (b.getStatus() == ProductBatch.BatchStatus.ACTIVE &&
+                                b.getExpiryDate() != null &&
+                                b.getExpiryDate().isBefore(today)))
+                .count();
+
         // Calculate inventory values
         BigDecimal totalInventoryValue = allBatches.stream()
-                .filter(b -> b.getCostPerUnit() != null && b.getQuantity() > 0)
+                .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                .filter(b -> b.getCostPerUnit() != null)
                 .map(b -> b.getCostPerUnit().multiply(BigDecimal.valueOf(b.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -511,6 +515,82 @@ public class ProductBatchService {
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
 
+        // ✅ NEW: Generate batches by expiry range with timeline stats
+        Map<String, List<BatchExpiryReportDTO.BatchSummary>> batchesByExpiryRange = new LinkedHashMap<>();
+        Map<String, BatchExpiryReportDTO.TimelineRangeStats> rangeStatsMap = new LinkedHashMap<>();
+
+        // Define ranges
+        LocalDate[] rangeDates = {
+                today.plusDays(7),
+                today.plusDays(30),
+                today.plusDays(60),
+                today.plusDays(90)
+        };
+        String[] rangeNames = {"0-7 days", "8-30 days", "31-60 days", "61-90 days", "Expired"};
+        String[] severityLevels = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "CRITICAL"};
+        int[] daysRanges = {7, 30, 60, 90, 999};
+
+        for (int i = 0; i < rangeNames.length; i++) {
+            String rangeName = rangeNames[i];
+            List<BatchExpiryReportDTO.BatchSummary> rangeBatches = new ArrayList<>();
+
+            List<ProductBatch> filteredBatches;
+            if (rangeName.equals("Expired")) {
+                filteredBatches = allBatches.stream()
+                        .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                        .filter(b -> b.getExpiryDate() != null)
+                        .filter(b -> b.getExpiryDate().isBefore(today))
+                        .collect(Collectors.toList());
+            } else {
+                LocalDate startDate = (i == 0) ? today : rangeDates[i - 1];
+                LocalDate endDate = rangeDates[i];
+
+                filteredBatches = allBatches.stream()
+                        .filter(b -> b.getStatus() == ProductBatch.BatchStatus.ACTIVE)
+                        .filter(b -> b.getExpiryDate() != null)
+                        .filter(b -> b.getExpiryDate().isAfter(startDate) && b.getExpiryDate().isBefore(endDate))
+                        .collect(Collectors.toList());
+            }
+
+            int totalQuantity = 0;
+            BigDecimal totalValue = BigDecimal.ZERO;
+
+            for (ProductBatch batch : filteredBatches) {
+                long daysUntil = ChronoUnit.DAYS.between(today, batch.getExpiryDate());
+                BigDecimal value = batch.getCostPerUnit() != null
+                        ? batch.getCostPerUnit().multiply(BigDecimal.valueOf(batch.getQuantity()))
+                        : BigDecimal.ZERO;
+
+                rangeBatches.add(BatchExpiryReportDTO.BatchSummary.builder()
+                        .batchId(batch.getId())
+                        .productName(batch.getProduct().getName())
+                        .batchNumber(batch.getBatchNumber())
+                        .quantity(batch.getQuantity())
+                        .daysUntilExpiry((int) daysUntil)
+                        .value(value)
+                        .build());
+
+                totalQuantity += batch.getQuantity();
+                totalValue = totalValue.add(value);
+            }
+
+            batchesByExpiryRange.put(rangeName, rangeBatches);
+
+            // Create range stats
+            rangeStatsMap.put(rangeName, BatchExpiryReportDTO.TimelineRangeStats.builder()
+                    .rangeName(rangeName)
+                    .batchCount(rangeBatches.size())
+                    .totalQuantity(totalQuantity)
+                    .totalValue(totalValue)
+                    .severityLevel(severityLevels[i])
+                    .daysRange(daysRanges[i])
+                    .build());
+        }
+
+        BatchExpiryReportDTO.TimelineStatistics timelineStats = BatchExpiryReportDTO.TimelineStatistics.builder()
+                .rangeStats(rangeStatsMap)
+                .build();
+
         return BatchExpiryReportDTO.builder()
                 .totalBatches((int) totalBatches)
                 .activeBatches((int) activeBatches)
@@ -521,6 +601,8 @@ public class ProductBatchService {
                 .expiringInventoryValue(expiringInventoryValue)
                 .expiredInventoryValue(expiredInventoryValue)
                 .criticalBatches(criticalBatches)
+                .batchesByExpiryRange(batchesByExpiryRange)
+                .timelineStats(timelineStats)  // ✅ NEW
                 .build();
     }
 
